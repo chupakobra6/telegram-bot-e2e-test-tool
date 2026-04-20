@@ -1,8 +1,8 @@
-# Набор Сценариев v1
+# v1 Scenario Suite
 
-Этот набор сценариев покрывает весь публичный функционал `telegram-bot-e2e-test-tool` v1 на реальном боте через MTProto.
+This scenario suite covers the full public surface of `telegram-bot-e2e-test-tool` v1 against a real bot over MTProto.
 
-## Что покрывается
+## What it covers
 
 - `send_text`
 - `send_photo`
@@ -11,64 +11,64 @@
 - `click_button`
 - `wait`
 - `dump_state`
-- target по `@username`
-- default chat fallback через `TG_E2E_DEFAULT_CHAT`
+- target selection by `@username`
+- default chat fallback through `TG_E2E_DEFAULT_CHAT`
 - `pinned` summary
-- service messages из истории чата
-- diff на:
-  - добавление нового сообщения
-  - удаление сообщений
-  - изменение уже существующего сообщения
-  - смену pinned message
+- service messages from chat history
+- diff handling for:
+  - adding a new message
+  - removing messages
+  - changing an existing message
+  - changing the pinned message
 
-## Сценарии
+## Scenarios
 
 - `examples/suite/01-start-pin-service.jsonl`
-  Проверяет `/start`, pinned state и service message `message pinned`.
+  Covers `/start`, pinned state, and the `message pinned` service message.
 - `examples/suite/02-dashboard-navigation-edit.jsonl`
-  Проверяет click по dashboard и edit одного pinned message.
+  Covers dashboard navigation and editing the same pinned message.
 - `examples/suite/03-text-draft-confirm.jsonl`
-  Проверяет text flow, draft card, confirm и cleanup transient сообщений.
+  Covers the text flow, draft card, confirmation, and transient message cleanup.
 - `examples/suite/04-photo-processing-and-draft.jsonl`
-  Проверяет `send_photo`, первое processing-сообщение и поздний draft update.
+  Covers `send_photo`, the initial processing message, and the later draft update.
 - `examples/suite/05-voice-processing.jsonl`
-  Проверяет `send_voice` и первую реакцию бота.
+  Covers `send_voice` and the bot's first visible reaction.
 - `examples/suite/06-audio-processing.jsonl`
-  Проверяет `send_audio` и первую реакцию бота.
+  Covers `send_audio` and the bot's first visible reaction.
 
-## Как запускать
+## How to run it
 
-Сначала подготовить фикстуры:
+First generate fixtures:
 
 ```bash
 make fixtures
 ```
 
-Потом прогнать весь suite:
+Then run the full suite:
 
 ```bash
 make run-suite
 ```
 
-Или отдельный сценарий:
+Or run a single scenario:
 
 ```bash
 make run-scenario SCENARIO=examples/suite/03-text-draft-confirm.jsonl
 ```
 
-## Что смотреть в результате
+## What to inspect in the result
 
-Поскольку в `v1` нет встроенных asserts, проверка идет по transcript и `ChatState`.
+Because `v1` has no built-in asserts, validation is done through the transcript and `ChatState`.
 
-Смотри:
+Check:
 
 - `artifacts/transcripts/*.json`
 - `artifacts/transcripts/*.txt`
 
-Критерии нормальной работы:
+Healthy-run criteria:
 
-- нет `error` и `timeout`
-- после `wait` приходит ожидаемый `state_update`, а не пустой повтор старого snapshot
-- `dump_state` показывает актуальные сообщения, pinned summary и кнопки
-- service messages реально присутствуют в истории, если Telegram их показал
-- `click_button` работает по последнему релевантному bot-message, а не по случайной старой кнопке
+- there is no `error` and no `timeout`
+- `wait` returns the expected `state_update`, not an empty replay of an old snapshot
+- `dump_state` shows current messages, pinned summary, and buttons
+- service messages are present in history when Telegram exposed them
+- `click_button` resolves against the latest relevant bot message, not a random stale button

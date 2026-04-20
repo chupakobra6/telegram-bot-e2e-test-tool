@@ -1,10 +1,10 @@
 # Telegram Bot E2E Test Tool
 
-Инструмент для real-user E2E тестирования Telegram-ботов через MTProto.
+A real-user E2E testing tool for Telegram bots over MTProto.
 
-Он логинится как обычный пользователь Telegram, отправляет сообщения в бота, нажимает inline-кнопки и снимает текущее состояние чата так, как его видит пользователь.
+It logs in as a regular Telegram user, sends messages to a bot, clicks inline buttons, and captures the current chat state the way a user sees it.
 
-## Что умеет v1
+## What v1 supports
 
 - `send_text`
 - `send_photo`
@@ -13,22 +13,22 @@
 - `click_button`
 - `wait`
 - `dump_state`
-- интерактивный JSONL-режим через stdin/stdout
-- JSONL-сценарии теми же командами, что и interactive mode
-- transcript artifacts в JSON и text
+- interactive JSONL mode over stdin/stdout
+- JSONL scenarios using the same commands as interactive mode
+- transcript artifacts in JSON and text format
 
-## Ключевые решения
+## Key design decisions
 
-- `MTProto`, а не Bot API  
-  Tool должен вести себя как обычный пользователь, а не как бот или тестовая ручка.
-- `JSONL` как единый протокол  
-  Interactive mode и scenario runner используют один и тот же формат команд.
-- `ChatState` как снимок видимой истории  
-  После действий tool не гадает по внутренним событиям бота, а читает последние сообщения чата, pinned state и service messages.
-- Пути по умолчанию зашиты в tool  
-  Для локального использования не нужно настраивать session/transcript paths через `.env`. Эти env-поля оставлены только как advanced override.
+- `MTProto`, not Bot API  
+  The tool should behave like a normal user, not like a bot or a testing backdoor.
+- `JSONL` as the single protocol  
+  Interactive mode and the scenario runner use the exact same command format.
+- `ChatState` as a snapshot of visible history  
+  After each action, the tool does not guess based on bot internals. It reads recent chat history, pinned state, and service messages.
+- Built-in default paths  
+  For normal local usage, you do not need to configure session or transcript paths in `.env`. Those env vars remain available only as advanced overrides.
 
-## Быстрый старт
+## Quick start
 
 ```bash
 cp .env.example .env
@@ -37,14 +37,14 @@ make login
 make interactive
 ```
 
-Если нужен полный suite:
+If you want the full suite:
 
 ```bash
 make fixtures
 make run-suite
 ```
 
-## Основные команды
+## Main commands
 
 ```bash
 make help
@@ -59,47 +59,54 @@ make run-suite
 make clean
 ```
 
-## Что действительно нужно в `.env`
+## What you actually need in `.env`
 
-Минимум:
+Minimum:
 
 - `TG_E2E_APP_ID`
 - `TG_E2E_APP_HASH`
 - `TG_E2E_PHONE`
 
-Практически удобно еще задать:
+You will usually also want:
 
 - `TG_E2E_DEFAULT_CHAT=@your_bot_username`
 
-Необязательные локальные пути в `.env` специально не нужны почти никому:
+[`.env.example`](./.env.example) already shows example value formats for:
+
+- `TG_E2E_APP_HASH` as a 32-character hex string
+- `TG_E2E_PHONE` in international format
+- `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`
+- absolute paths for rare override cases
+
+Optional local path overrides in `.env` are intentionally not needed for most users:
 
 - `TG_E2E_SESSION_PATH`
 - `TG_E2E_TRANSCRIPT_DIR`
 
-Tool и так использует нормальные defaults:
+The tool already uses sensible defaults:
 
 - session: `.sessions/user.json`
 - transcripts: `artifacts/transcripts`
 
-## Прокси
+## Proxy support
 
-- `HTTP_PROXY` / `HTTPS_PROXY` поддерживаются через `HTTP CONNECT`
-- `NO_PROXY` учитывается
-- `ALL_PROXY` можно использовать для `SOCKS5`
+- `HTTP_PROXY` / `HTTPS_PROXY` are supported via `HTTP CONNECT`
+- `NO_PROXY` is respected
+- `ALL_PROXY` can be used for `SOCKS5`
 
-## Пример interactive команды
+## Example interactive command
 
 ```json
 {"id":"start","action":"send_text","chat":"@your_bot_username","text":"/start"}
 ```
 
-Пример следующего шага:
+Example next step:
 
 ```json
 {"id":"wait1","action":"wait","timeout_ms":8000}
 ```
 
-## Куда смотреть дальше
+## Where to look next
 
 - [docs/setup.md](./docs/setup.md)
 - [docs/overview.md](./docs/overview.md)

@@ -1,16 +1,16 @@
-# Формат Сценариев
+# Scenario Format
 
-Сценарии — это `JSONL` файлы. Одна строка — одна команда.
+Scenarios are `JSONL` files. One line is one command.
 
-Пустые строки и строки, начинающиеся с `#`, игнорируются.
+Empty lines and lines starting with `#` are ignored.
 
-## Почему JSONL
+## Why JSONL
 
-- сценарии используют тот же формат, что и interactive mode
-- нет отдельного DSL, который надо поддерживать отдельно
-- любую строку можно буквально вставить в stdin interactive mode
+- scenarios use the same format as interactive mode
+- there is no separate DSL to maintain
+- any line can be pasted directly into interactive mode stdin
 
-## Поддерживаемые actions
+## Supported actions
 
 - `send_text`
 - `send_photo`
@@ -20,31 +20,31 @@
 - `wait`
 - `dump_state`
 
-## Общие поля
+## Common fields
 
-- `id` — опционально, но очень желательно
-- `action` — обязательно
-- `chat` — опционально, если уже есть current chat или задан `TG_E2E_DEFAULT_CHAT`
-- `timeout_ms` — в основном для `wait`
+- `id` — optional, but strongly recommended
+- `action` — required
+- `chat` — optional if a current chat already exists or `TG_E2E_DEFAULT_CHAT` is set
+- `timeout_ms` — mainly used for `wait`
 
-## Поля по action
+## Per-action fields
 
 - `send_text`: `text`
-- `send_photo`: `path`, опционально `caption`
+- `send_photo`: `path`, optional `caption`
 - `send_voice`: `path`
 - `send_audio`: `path`
 - `click_button`: `button_text`
-- `wait`: опционально `timeout_ms`
-- `dump_state`: без дополнительных полей
+- `wait`: optional `timeout_ms`
+- `dump_state`: no extra fields
 
-## Пример
+## Example
 
 ```json
 {"id":"start","action":"send_text","text":"/start"}
 {"id":"wait-dashboard","action":"wait","timeout_ms":5000}
-{"id":"confirm","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"confirm","action":"click_button","button_text":"Confirm"}
 ```
 
-Runner останавливается на первой transport/runtime/timeout ошибке и сохраняет transcript artifacts.
+The runner stops on the first transport, runtime, or timeout error and saves transcript artifacts.
 
-Готовый полный suite смотри в [docs/scenario-suite.md](./scenario-suite.md).
+See [docs/scenario-suite.md](./scenario-suite.md) for the full ready-to-run suite.

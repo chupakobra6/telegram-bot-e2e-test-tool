@@ -1,82 +1,89 @@
 # Setup
 
-## 1. Подготовить окружение
+## 1. Prepare the environment
 
 ```bash
 cd telegram-bot-e2e-test-tool
 cp .env.example .env
 ```
 
-Заполнить:
+Fill in:
 
 - `TG_E2E_APP_ID`
 - `TG_E2E_APP_HASH`
 - `TG_E2E_PHONE`
 
-Обычно еще стоит задать:
+[`.env.example`](../.env.example) already contains example value formats, including:
+
+- app hash
+- phone number
+- proxy URL
+- absolute paths for optional overrides
+
+You will usually also want:
 
 - `TG_E2E_DEFAULT_CHAT=@your_bot_username`
 
-## 2. Проверить effective config
+## 2. Check the effective config
 
 ```bash
 make doctor
 ```
 
-`doctor` показывает:
+`doctor` shows:
 
-- заданы ли Telegram credentials
-- какой default chat будет использоваться
-- где лежит session file
-- существует ли session file
-- какие proxy-переменные подхвачены
+- whether Telegram credentials are set
+- which default chat will be used
+- where the session file lives
+- whether the session file exists
+- which proxy variables were picked up
 
-## 3. Создать MTProto session
+## 3. Create an MTProto session
 
 ```bash
 make login
 ```
 
-Tool попросит код из Telegram, а если у аккаунта включен 2FA — пароль.
+The tool will ask for a code from Telegram, and for a password if the account uses 2FA.
 
-## 4. Запустить interactive mode
+## 4. Start interactive mode
 
 ```bash
 make interactive
 ```
 
-Пример команды:
+Example command:
 
 ```json
 {"id":"start","action":"send_text","text":"/start"}
 ```
 
-## 5. Запустить один сценарий
+## 5. Run a single scenario
 
 ```bash
 make run-scenario SCENARIO=examples/suite/03-text-draft-confirm.jsonl
 ```
 
-## 6. Запустить весь v1 suite
+## 6. Run the full v1 suite
 
 ```bash
 make fixtures
 make run-suite
 ```
 
-## Пути и overrides
+## Paths and overrides
 
-По умолчанию tool сам использует:
+By default, the tool uses:
 
 - session: `.sessions/user.json`
 - transcripts: `artifacts/transcripts`
 
-Переопределять их через `.env` обычно не нужно. Поля `TG_E2E_SESSION_PATH` и `TG_E2E_TRANSCRIPT_DIR` оставлены только для нестандартных случаев.
+You usually do not need to override them in `.env`. `TG_E2E_SESSION_PATH` and `TG_E2E_TRANSCRIPT_DIR` are kept only for non-standard setups.
 
-## Прокси
+## Proxy support
 
-- `HTTP_PROXY` / `HTTPS_PROXY` работают через `HTTP CONNECT`
-- `NO_PROXY` учитывается
-- `ALL_PROXY` можно использовать для `SOCKS5`
+- `HTTP_PROXY` / `HTTPS_PROXY` work through `HTTP CONNECT`
+- `NO_PROXY` is respected
+- `ALL_PROXY` can be used for `SOCKS5`
 
-Если ты запускаешь команды через `make`, `.env` подхватывается автоматически.
+If you run commands through `make`, `.env` is loaded automatically.

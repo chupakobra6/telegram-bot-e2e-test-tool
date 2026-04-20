@@ -1,28 +1,28 @@
-# Обзор
+# Overview
 
-`telegram-bot-e2e-test-tool` управляет Telegram-ботом как обычный пользователь через MTProto.
+`telegram-bot-e2e-test-tool` controls a Telegram bot like a regular user over MTProto.
 
 ## Scope v1
 
-- только private chat с ботом
-- JSONL interactive mode через stdin/stdout
-- JSONL scenario runner теми же командами
-- `ChatState` из последних сообщений истории
+- private chat with a bot only
+- JSONL interactive mode over stdin/stdout
+- JSONL scenario runner using the same commands
+- `ChatState` built from recent chat history
 - pinned summary
-- service messages в видимой истории
-- transcript artifacts для автодебага
+- service messages in visible history
+- transcript artifacts for auto-debugging
 
-## Как это работает
+## How it works
 
-1. Tool логинится отдельным Telegram-аккаунтом.
-2. Принимает JSON-команду.
-3. Выполняет пользовательское действие в Telegram.
-4. Снимает новый snapshot истории чата и pinned state.
-5. Возвращает `state_snapshot` или `state_update`.
+1. The tool logs in with a separate Telegram account.
+2. It accepts a JSON command.
+3. It performs a user-like action in Telegram.
+4. It captures a fresh chat-history snapshot and pinned state.
+5. It returns `state_snapshot` or `state_update`.
 
-## Почему так
+## Why it works this way
 
-- нет отдельного test DSL поверх интерактивных команд
-- нет test-only ручек, которых нет у обычного пользователя
-- нет зависимости от Bot API
-- проще дебажить сценарии по одному формату команд и одному формату transcript
+- there is no separate test DSL on top of interactive commands
+- there are no test-only hooks that a regular user would not have
+- there is no dependency on Bot API
+- scenarios are easier to debug when there is one command format and one transcript format

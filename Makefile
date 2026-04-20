@@ -7,17 +7,17 @@ SCENARIO ?= examples/shelfy-smoke.jsonl
 .PHONY: help setup fmt test fixtures login interactive run-scenario run-suite print-config doctor clean
 
 help:
-	@printf "Доступные команды:\\n"
+	@printf "Available commands:\\n"
 	@printf "  make setup          # go mod tidy\\n"
 	@printf "  make test           # go test ./...\\n"
-	@printf "  make doctor         # показать effective config и наличие session file\\n"
-	@printf "  make print-config   # вывести компактный config summary\\n"
-	@printf "  make login          # создать MTProto session\\n"
+	@printf "  make doctor         # show effective config and session file status\\n"
+	@printf "  make print-config   # print a compact config summary\\n"
+	@printf "  make login          # create an MTProto session\\n"
 	@printf "  make interactive    # JSONL interactive mode\\n"
-	@printf "  make run-scenario   # выполнить один JSONL сценарий (SCENARIO=...)\\n"
-	@printf "  make fixtures       # сгенерировать локальные media fixtures\\n"
-	@printf "  make run-suite      # прогнать полный v1 suite\\n"
-	@printf "  make clean          # удалить локальные transcripts и fixtures\\n"
+	@printf "  make run-scenario   # run one JSONL scenario (SCENARIO=...)\\n"
+	@printf "  make fixtures       # generate local media fixtures\\n"
+	@printf "  make run-suite      # run the full v1 suite\\n"
+	@printf "  make clean          # remove local transcripts and fixtures\\n"
 
 setup:
 	go mod tidy
