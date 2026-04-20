@@ -1,0 +1,5 @@
+.sessions/
+artifacts/transcripts/
+*.log
+.DS_Store
+
