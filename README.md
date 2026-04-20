@@ -30,10 +30,18 @@ make run-scenario
 
 ## Quick start
 
-1. Configure Telegram app credentials and the test account environment variables.
+1. Copy `.env.example` to `.env` and fill in the Telegram app credentials and test account variables.
 2. Run `make login` once to create the MTProto user session.
 3. Use `make interactive` to drive the bot with JSONL commands.
 4. Use `make run-scenario` to execute a JSONL scenario file.
+
+Before running commands in a plain shell:
+
+```bash
+set -a
+source .env
+set +a
+```
 
 ## Example interactive command
 

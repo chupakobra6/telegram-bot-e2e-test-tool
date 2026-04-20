@@ -1,5 +1,22 @@
-.sessions/
-artifacts/transcripts/
-*.log
-.DS_Store
+# Local environment and secrets
+.env
+.env.local
+.env.*.local
+!.env.example
 
+# MTProto session and runtime artifacts
+.sessions/
+artifacts/
+
+# Go test and coverage artifacts
+coverage.out
+coverage-*.out
+*.test
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.swp
+*.swo

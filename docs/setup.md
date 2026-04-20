@@ -17,6 +17,15 @@ Use a separate Telegram user account for E2E testing. This tool logs in as that 
 
 ## 4. Configure environment
 
+Start from the example file:
+
+```bash
+cp .env.example .env
+set -a
+source .env
+set +a
+```
+
 Required:
 
 - `TG_E2E_APP_ID`
