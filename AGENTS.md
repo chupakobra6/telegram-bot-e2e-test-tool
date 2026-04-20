@@ -41,6 +41,7 @@
 - Generate local media fixtures: `make fixtures`
 - Run the full v1 suite: `make run-suite`
 - Clean local artifacts: `make clean`
+- Runtime-oriented `make` targets should load `.env` automatically; do not require users to `source .env` manually for normal local usage.
 
 ## Code change policy
 - Keep diffs small and local.
@@ -72,6 +73,8 @@
 - Put reusable setup, protocol, and troubleshooting guidance in `README.md` and `docs/*.md`.
 - Keep repo-specific agent guidance in this file concise and stable.
 - Do not put transient debugging notes, one-off procedures, or personal machine details into `AGENTS.md`.
+- Keep `README.md`, `docs/*.md`, `.env.example`, and `make help` consistent when setup or CLI UX changes.
+- `.env.example` should include concrete example value formats for required credentials, proxy settings, and optional path overrides; do not leave onboarding-critical fields as formatless placeholders.
 
 ## Knowledge capture
 - Update `AGENTS.md` only for stable, high-signal repo rules:
