@@ -32,7 +32,6 @@ type Engine struct {
 
 	currentChat string
 	lastState   *state.ChatState
-	pendingWait *protocol.Event
 }
 
 func New(transport Transport, tr *transcript.Transcript, out io.Writer, defaultChat string, historyLimit int, syncInterval time.Duration) *Engine {
@@ -134,14 +133,6 @@ func (e *Engine) executeWait(ctx context.Context, cmd protocol.Command, chat str
 		timeout = 15 * time.Second
 	}
 
-	if e.pendingWait != nil && e.pendingWait.Chat == chat {
-		pending := *e.pendingWait
-		pending.CommandID = cmd.ID
-		pending.Action = cmd.Action
-		e.pendingWait = nil
-		return e.emit(pending)
-	}
-
 	var baseline state.ChatState
 	if e.lastState != nil && e.currentChat == chat {
 		baseline = *e.lastState
@@ -187,7 +178,6 @@ func (e *Engine) executeWait(ctx context.Context, cmd protocol.Command, chat str
 			}
 			e.lastState = &snapshot
 			e.currentChat = chat
-			e.pendingWait = nil
 			return e.emit(protocol.Event{
 				Type:      "state_update",
 				CommandID: cmd.ID,
@@ -220,7 +210,7 @@ func (e *Engine) emitAckAndSync(ctx context.Context, cmd protocol.Command, chat 
 	}
 	if e.lastState == nil {
 		e.lastState = &snapshot
-		event := protocol.Event{
+		return e.emit(protocol.Event{
 			Type:      "state_snapshot",
 			CommandID: cmd.ID,
 			Action:    cmd.Action,
@@ -228,15 +218,13 @@ func (e *Engine) emitAckAndSync(ctx context.Context, cmd protocol.Command, chat 
 			OK:        true,
 			Message:   "chat snapshot captured",
 			Snapshot:  &snapshot,
-		}
-		e.pendingWait = &event
-		return e.emit(event)
+		})
 	}
 
 	diff := state.Diff(*e.lastState, snapshot)
 	e.lastState = &snapshot
 	if diff.HasChanges() {
-		event := protocol.Event{
+		return e.emit(protocol.Event{
 			Type:      "state_update",
 			CommandID: cmd.ID,
 			Action:    cmd.Action,
@@ -245,11 +233,8 @@ func (e *Engine) emitAckAndSync(ctx context.Context, cmd protocol.Command, chat 
 			Message:   "visible chat state changed",
 			Snapshot:  &snapshot,
 			Diff:      &diff,
-		}
-		e.pendingWait = &event
-		return e.emit(event)
+		})
 	}
-	e.pendingWait = nil
 	return e.emit(protocol.Event{
 		Type:      "state_snapshot",
 		CommandID: cmd.ID,

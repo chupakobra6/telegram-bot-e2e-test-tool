@@ -2,28 +2,55 @@
 
 ## `telegram session is not authorized`
 
-Run `make login` first. The runtime commands require an existing MTProto session file.
+Сначала выполни:
 
-## `TG_E2E_APP_ID` or `TG_E2E_APP_HASH` is required
+```bash
+make login
+```
 
-Your Telegram app credentials are missing or empty. Export them before starting the tool.
+Runtime-команды требуют уже существующий MTProto session file.
+
+## `TG_E2E_APP_ID` или `TG_E2E_APP_HASH` is required
+
+В `.env` не заданы Telegram app credentials.
+
+Проверь:
+
+```bash
+make doctor
+```
 
 ## `chat is required`
 
-The command did not include `chat`, there is no current chat from a previous command, and `TG_E2E_DEFAULT_CHAT` is unset.
+У команды нет поля `chat`, current chat еще не выбран, и `TG_E2E_DEFAULT_CHAT` не задан.
 
 ## `button ... not found in visible messages`
 
-The latest synced chat snapshot does not currently show a matching inline button. Run `dump_state` and inspect the visible messages before clicking again.
+В текущем snapshot нет подходящей inline-кнопки в последнем релевантном bot-message.
+
+Сделай:
+
+```json
+{"id":"dump","action":"dump_state"}
+```
+
+И посмотри, какие сообщения и кнопки сейчас реально видит tool.
 
 ## `wait timeout`
 
-The visible chat state did not change before the timeout expired. This usually means:
+Видимое состояние чата не изменилось до истечения timeout.
 
-- the bot did not answer
-- the bot answered outside the latest synced history window
-- the timeout is too small for the scenario
+Обычно это значит одно из трех:
 
-## Where are transcripts stored?
+- бот не ответил
+- timeout слишком маленький
+- нужное изменение не попало в видимое окно истории
 
-By default in `artifacts/transcripts/` as both JSON and text files.
+## Где лежат транскрипты
+
+По умолчанию:
+
+- `artifacts/transcripts/*.json`
+- `artifacts/transcripts/*.txt`
+
+Если путь был переопределен, `make doctor` покажет effective location.

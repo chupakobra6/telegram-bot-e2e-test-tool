@@ -1,64 +1,82 @@
 # Setup
 
-## 1. Install dependencies
+## 1. Подготовить окружение
 
 ```bash
 cd telegram-bot-e2e-test-tool
-make setup
-```
-
-## 2. Create Telegram app credentials
-
-Create `api_id` and `api_hash` at `https://my.telegram.org`.
-
-## 3. Use a dedicated test account
-
-Use a separate Telegram user account for E2E testing. This tool logs in as that user through MTProto.
-
-## 4. Configure environment
-
-Start from the example file:
-
-```bash
 cp .env.example .env
-set -a
-source .env
-set +a
 ```
 
-Required:
+Заполнить:
 
 - `TG_E2E_APP_ID`
 - `TG_E2E_APP_HASH`
 - `TG_E2E_PHONE`
 
-Optional:
+Обычно еще стоит задать:
 
-- `TG_E2E_PASSWORD` for 2FA accounts
-- `TG_E2E_SESSION_PATH` default: `.sessions/user.json`
-- `TG_E2E_TRANSCRIPT_DIR` default: `artifacts/transcripts`
-- `TG_E2E_DEFAULT_CHAT` default chat target such as `@shelfy_bot`
-- `TG_E2E_HISTORY_LIMIT` default: `50`
-- `TG_E2E_SYNC_INTERVAL_MS` default: `1200`
+- `TG_E2E_DEFAULT_CHAT=@your_bot_username`
 
-## 5. Create the MTProto session
+## 2. Проверить effective config
+
+```bash
+make doctor
+```
+
+`doctor` показывает:
+
+- заданы ли Telegram credentials
+- какой default chat будет использоваться
+- где лежит session file
+- существует ли session file
+- какие proxy-переменные подхвачены
+
+## 3. Создать MTProto session
 
 ```bash
 make login
 ```
 
-The tool will prompt for the login code and then persist the session file.
+Tool попросит код из Telegram, а если у аккаунта включен 2FA — пароль.
 
-## 6. Run the tool
-
-Interactive:
+## 4. Запустить interactive mode
 
 ```bash
 make interactive
 ```
 
-Scenario:
+Пример команды:
+
+```json
+{"id":"start","action":"send_text","text":"/start"}
+```
+
+## 5. Запустить один сценарий
 
 ```bash
-make run-scenario
+make run-scenario SCENARIO=examples/suite/03-text-draft-confirm.jsonl
 ```
+
+## 6. Запустить весь v1 suite
+
+```bash
+make fixtures
+make run-suite
+```
+
+## Пути и overrides
+
+По умолчанию tool сам использует:
+
+- session: `.sessions/user.json`
+- transcripts: `artifacts/transcripts`
+
+Переопределять их через `.env` обычно не нужно. Поля `TG_E2E_SESSION_PATH` и `TG_E2E_TRANSCRIPT_DIR` оставлены только для нестандартных случаев.
+
+## Прокси
+
+- `HTTP_PROXY` / `HTTPS_PROXY` работают через `HTTP CONNECT`
+- `NO_PROXY` учитывается
+- `ALL_PROXY` можно использовать для `SOCKS5`
+
+Если ты запускаешь команды через `make`, `.env` подхватывается автоматически.

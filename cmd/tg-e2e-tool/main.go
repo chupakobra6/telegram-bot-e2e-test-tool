@@ -17,7 +17,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: tg-e2e-tool <login|interactive|run-scenario|print-config> [path]")
+		printUsage(os.Stderr)
 		os.Exit(2)
 	}
 	cfg, err := config.Load()
@@ -27,6 +27,8 @@ func main() {
 	}
 	client := mtproto.New(cfg)
 	switch os.Args[1] {
+	case "help", "--help", "-h":
+		printUsage(os.Stdout)
 	case "print-config":
 		fmt.Printf("app_id=%d\nsession=%s\ntranscripts=%s\ndefault_chat=%s\nhistory_limit=%d\nsync_interval=%s\n",
 			cfg.AppID,
@@ -36,6 +38,8 @@ func main() {
 			cfg.HistoryLimit,
 			cfg.SyncInterval,
 		)
+	case "doctor":
+		printDoctor(cfg, os.Stdout)
 	case "login":
 		if err := client.Login(context.Background(), os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -81,9 +85,33 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Fprintln(os.Stderr, "unknown command")
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
+		printUsage(os.Stderr)
 		os.Exit(2)
 	}
+}
+
+func printUsage(out *os.File) {
+	fmt.Fprintln(out, "usage: tg-e2e-tool <help|doctor|login|interactive|run-scenario|print-config> [path]")
+}
+
+func printDoctor(cfg config.Config, out *os.File) {
+	sessionExists := fileExists(cfg.SessionPath)
+	fmt.Fprintf(out, "app_id_set=%t\n", cfg.AppID != 0)
+	fmt.Fprintf(out, "app_hash_set=%t\n", strings.TrimSpace(cfg.AppHash) != "")
+	fmt.Fprintf(out, "phone_set=%t\n", strings.TrimSpace(cfg.Phone) != "")
+	fmt.Fprintf(out, "default_chat=%s\n", emptyAsDash(cfg.DefaultChat))
+	fmt.Fprintf(out, "session_path=%s\n", cfg.SessionPath)
+	fmt.Fprintf(out, "session_path_mode=%s\n", pathMode(os.Getenv("TG_E2E_SESSION_PATH"), config.DefaultSessionPath))
+	fmt.Fprintf(out, "session_exists=%t\n", sessionExists)
+	fmt.Fprintf(out, "transcripts=%s\n", cfg.TranscriptOutputDir)
+	fmt.Fprintf(out, "transcript_path_mode=%s\n", pathMode(os.Getenv("TG_E2E_TRANSCRIPT_DIR"), config.DefaultTranscriptOutputDir))
+	fmt.Fprintf(out, "history_limit=%d\n", cfg.HistoryLimit)
+	fmt.Fprintf(out, "sync_interval=%s\n", cfg.SyncInterval)
+	fmt.Fprintf(out, "http_proxy_set=%t\n", envSet("HTTP_PROXY"))
+	fmt.Fprintf(out, "https_proxy_set=%t\n", envSet("HTTPS_PROXY"))
+	fmt.Fprintf(out, "all_proxy_set=%t\n", envSet("ALL_PROXY"))
+	fmt.Fprintf(out, "no_proxy_set=%t\n", envSet("NO_PROXY"))
 }
 
 func saveTranscript(cfg config.Config, tr *transcript.Transcript, prefix string, stderr *os.File) {
@@ -101,4 +129,30 @@ func scenarioPrefix(path string) string {
 		return "scenario"
 	}
 	return name
+}
+
+func fileExists(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func envSet(key string) bool {
+	return strings.TrimSpace(os.Getenv(key)) != ""
+}
+
+func pathMode(rawValue string, defaultPath string) string {
+	if strings.TrimSpace(rawValue) == "" {
+		return "default(" + defaultPath + ")"
+	}
+	return "override"
+}
+
+func emptyAsDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
 }

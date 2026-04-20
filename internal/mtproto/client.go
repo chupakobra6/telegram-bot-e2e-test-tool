@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/dcs"
 	"github.com/gotd/td/telegram/message"
 	"github.com/gotd/td/telegram/message/peer"
 	"github.com/gotd/td/telegram/message/styling"
@@ -51,29 +53,61 @@ func (c *Client) Login(ctx context.Context, in *os.File, out *os.File) error {
 	if err := ensureSessionDir(c.cfg.SessionPath); err != nil {
 		return err
 	}
-	client := telegram.NewClient(c.cfg.AppID, c.cfg.AppHash, telegram.Options{
-		SessionStorage: &session.FileStorage{Path: c.cfg.SessionPath},
-	})
+	client := c.newTelegramClient()
 	reader := bufio.NewReader(in)
+	_, _ = fmt.Fprintf(out, "starting MTProto login for %s\n", maskPhone(c.cfg.Phone))
+	_, _ = fmt.Fprintln(out, "connecting to Telegram...")
 	return client.Run(ctx, func(runCtx context.Context) error {
-		codePrompt := auth.CodeAuthenticatorFunc(func(ctx context.Context, sentCode *tg.AuthSentCode) (string, error) {
-			_, _ = fmt.Fprint(out, "code: ")
-			code, err := reader.ReadString('\n')
-			if err != nil {
-				return "", err
-			}
-			return strings.TrimSpace(code), nil
-		})
+		status, err := client.Auth().Status(runCtx)
+		if err != nil {
+			return fmt.Errorf("auth status: %w", err)
+		}
+		if status.Authorized {
+			_, _ = fmt.Fprintln(out, "session already authorized")
+			return nil
+		}
 
-		var flow auth.Flow
-		if strings.TrimSpace(c.cfg.Password) != "" {
-			flow = auth.NewFlow(auth.Constant(c.cfg.Phone, c.cfg.Password, codePrompt), auth.SendCodeOptions{})
-		} else {
-			flow = auth.NewFlow(auth.CodeOnly(c.cfg.Phone, codePrompt), auth.SendCodeOptions{})
+		_, _ = fmt.Fprintf(out, "connected, authenticating as %s\n", maskPhone(c.cfg.Phone))
+		_, _ = fmt.Fprintln(out, "requesting login code...")
+		sentCodeClass, err := client.Auth().SendCode(runCtx, c.cfg.Phone, auth.SendCodeOptions{})
+		if err != nil {
+			return fmt.Errorf("send code: %w", err)
 		}
-		if err := client.Auth().IfNecessary(runCtx, flow); err != nil {
-			return err
+
+		sentCode, ok := sentCodeClass.(*tg.AuthSentCode)
+		if !ok {
+			if success, ok := sentCodeClass.(*tg.AuthSentCodeSuccess); ok {
+				_ = success
+				_, _ = fmt.Fprintln(out, "login successful")
+				return nil
+			}
+			return fmt.Errorf("unexpected sent code type %T", sentCodeClass)
 		}
+
+		_, _ = fmt.Fprintf(out, "code requested via %s\n", sentCodeTypeSummary(sentCode))
+		code, err := promptLine(out, reader, "code: ")
+		if err != nil {
+			return fmt.Errorf("read code: %w", err)
+		}
+
+		if _, err := client.Auth().SignIn(runCtx, c.cfg.Phone, code, sentCode.PhoneCodeHash); err != nil {
+			if errors.Is(err, auth.ErrPasswordAuthNeeded) {
+				password := strings.TrimSpace(c.cfg.Password)
+				if password == "" {
+					_, _ = fmt.Fprintln(out, "two-factor authentication is enabled")
+					password, err = promptLine(out, reader, "password: ")
+					if err != nil {
+						return fmt.Errorf("read password: %w", err)
+					}
+				}
+				if _, err := client.Auth().Password(runCtx, password); err != nil {
+					return fmt.Errorf("sign in with password: %w", err)
+				}
+			} else {
+				return fmt.Errorf("sign in: %w", err)
+			}
+		}
+
 		_, _ = fmt.Fprintln(out, "login successful")
 		return nil
 	})
@@ -86,9 +120,7 @@ func (c *Client) RunAuthorized(ctx context.Context, fn func(context.Context, *Se
 	if err := ensureSessionDir(c.cfg.SessionPath); err != nil {
 		return err
 	}
-	client := telegram.NewClient(c.cfg.AppID, c.cfg.AppHash, telegram.Options{
-		SessionStorage: &session.FileStorage{Path: c.cfg.SessionPath},
-	})
+	client := c.newTelegramClient()
 	return client.Run(ctx, func(runCtx context.Context) error {
 		status, err := client.Auth().Status(runCtx)
 		if err != nil {
@@ -182,12 +214,14 @@ func (s *Session) SyncChat(ctx context.Context, chat string, limit int) (state.C
 	messages := historyMessages(result)
 	visible := make([]state.VisibleMessage, 0, len(messages))
 	for _, msgClass := range messages {
-		msg, ok := msgClass.(*tg.Message)
-		if !ok {
-			continue
+		switch msg := msgClass.(type) {
+		case *tg.Message:
+			normalized := normalizeMessage(*msg, entities)
+			visible = append(visible, normalized)
+		case *tg.MessageService:
+			normalized := normalizeServiceMessage(*msg, entities)
+			visible = append(visible, normalized)
 		}
-		normalized := normalizeMessage(*msg, entities)
-		visible = append(visible, normalized)
 	}
 	pinned, err := s.lookupPinned(ctx, target, visible)
 	if err != nil {
@@ -295,19 +329,7 @@ func (s *Session) resolveNumeric(ctx context.Context, id int64, raw string) (res
 }
 
 func normalizeMessage(msg tg.Message, entities peer.Entities) state.VisibleMessage {
-	sender := "peer"
-	var senderID int64
-	if msg.Out {
-		sender = "self"
-	}
-	if from, ok := msg.GetFromID(); ok {
-		senderID = peerClassID(from)
-		if !msg.Out {
-			if user, ok := extractUser(entities, from); ok && user.Bot {
-				sender = "bot"
-			}
-		}
-	}
+	sender, senderID := messageSender(msg.Out, msg.GetFromID, entities)
 	return state.VisibleMessage{
 		ID:        msg.ID,
 		Sender:    sender,
@@ -321,6 +343,36 @@ func normalizeMessage(msg tg.Message, entities peer.Entities) state.VisibleMessa
 	}
 }
 
+func normalizeServiceMessage(msg tg.MessageService, entities peer.Entities) state.VisibleMessage {
+	sender, senderID := messageSender(msg.Out, msg.GetFromID, entities)
+	return state.VisibleMessage{
+		ID:        msg.ID,
+		Sender:    sender,
+		SenderID:  senderID,
+		Outgoing:  msg.Out,
+		Kind:      "service",
+		Text:      serviceActionText(msg.Action),
+		Timestamp: time.Unix(int64(msg.Date), 0).UTC(),
+	}
+}
+
+func messageSender(out bool, getFromID func() (tg.PeerClass, bool), entities peer.Entities) (string, int64) {
+	sender := "peer"
+	var senderID int64
+	if out {
+		sender = "self"
+	}
+	if from, ok := getFromID(); ok {
+		senderID = peerClassID(from)
+		if !out {
+			if user, ok := extractUser(entities, from); ok && user.Bot {
+				sender = "bot"
+			}
+		}
+	}
+	return sender, senderID
+}
+
 func messageText(msg tg.Message) string {
 	if text := strings.TrimSpace(msg.Message); text != "" {
 		return text
@@ -329,11 +381,22 @@ func messageText(msg tg.Message) string {
 	case *tg.MessageMediaPhoto:
 		return "[photo]"
 	case *tg.MessageMediaDocument:
-		return "[document]"
+		return documentPlaceholder(msg.Media)
 	case *tg.MessageMediaUnsupported:
 		return "[unsupported media]"
 	default:
 		return ""
+	}
+}
+
+func serviceActionText(action tg.MessageActionClass) string {
+	switch typed := action.(type) {
+	case *tg.MessageActionPinMessage:
+		return "[service] message pinned"
+	case nil:
+		return "[service]"
+	default:
+		return "[service] " + typed.TypeName()
 	}
 }
 
@@ -372,15 +435,64 @@ func dialogEntities(result tg.MessagesDialogsClass) peer.Entities {
 }
 
 func normalizeKind(media tg.MessageMediaClass) string {
-	switch media.(type) {
+	switch typed := media.(type) {
 	case *tg.MessageMediaPhoto:
 		return "photo"
 	case *tg.MessageMediaDocument:
-		return "document"
+		return documentKind(typed)
 	case nil:
 		return "text"
 	default:
 		return "media"
+	}
+}
+
+func documentKind(media *tg.MessageMediaDocument) string {
+	if media == nil {
+		return "document"
+	}
+	if media.Voice {
+		return "voice"
+	}
+	if media.Round {
+		return "round_video"
+	}
+	if media.Video {
+		return "video"
+	}
+	if document, ok := media.GetDocument(); ok {
+		if doc, ok := document.(*tg.Document); ok {
+			for _, attr := range doc.Attributes {
+				audio, ok := attr.(*tg.DocumentAttributeAudio)
+				if !ok {
+					continue
+				}
+				if audio.Voice {
+					return "voice"
+				}
+				return "audio"
+			}
+		}
+	}
+	return "document"
+}
+
+func documentPlaceholder(media tg.MessageMediaClass) string {
+	typed, ok := media.(*tg.MessageMediaDocument)
+	if !ok {
+		return "[document]"
+	}
+	switch documentKind(typed) {
+	case "voice":
+		return "[voice]"
+	case "audio":
+		return "[audio]"
+	case "video":
+		return "[video]"
+	case "round_video":
+		return "[round video]"
+	default:
+		return "[document]"
 	}
 }
 
@@ -464,6 +576,53 @@ func ensureSessionDir(path string) error {
 		return nil
 	}
 	return os.MkdirAll(dir, 0o755)
+}
+
+func (c *Client) newTelegramClient() *telegram.Client {
+	return telegram.NewClient(c.cfg.AppID, c.cfg.AppHash, telegram.Options{
+		SessionStorage: &session.FileStorage{Path: c.cfg.SessionPath},
+		Resolver:       dcs.Plain(dcs.PlainOptions{Dial: proxyAwareDialContext}),
+	})
+}
+
+func promptLine(out *os.File, reader *bufio.Reader, label string) (string, error) {
+	_, _ = fmt.Fprint(out, label)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
+func maskPhone(phone string) string {
+	trimmed := strings.TrimSpace(phone)
+	if len(trimmed) <= 4 {
+		return trimmed
+	}
+	return trimmed[:2] + strings.Repeat("*", max(0, len(trimmed)-4)) + trimmed[len(trimmed)-2:]
+}
+
+func sentCodeTypeSummary(sentCode *tg.AuthSentCode) string {
+	switch sentCode.Type.(type) {
+	case *tg.AuthSentCodeTypeApp:
+		return "Telegram app"
+	case *tg.AuthSentCodeTypeSMS:
+		return "SMS"
+	case *tg.AuthSentCodeTypeCall:
+		return "phone call"
+	case *tg.AuthSentCodeTypeFlashCall:
+		return "flash call"
+	case *tg.AuthSentCodeTypeMissedCall:
+		return "missed call"
+	case *tg.AuthSentCodeTypeEmailCode:
+		return "email"
+	case *tg.AuthSentCodeTypeSetUpEmailRequired:
+		return "email setup required"
+	case *tg.AuthSentCodeTypeFragmentSMS:
+		return "fragment SMS"
+	default:
+		return fmt.Sprintf("%T", sentCode.Type)
+	}
 }
 
 func (s *Session) lookupPinned(ctx context.Context, target resolvedTarget, visible []state.VisibleMessage) (*state.PinnedMessage, error) {

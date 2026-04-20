@@ -1,18 +1,22 @@
 # Interactive Mode
 
-Interactive mode is JSONL over stdin/stdout.
+Interactive mode — это JSONL-протокол через stdin/stdout.
 
-## Input
+## Вход
 
-Each input line is a JSON command:
+Каждая входящая строка — JSON-команда.
+
+Пример:
 
 ```json
 {"id":"start","action":"send_text","chat":"@your_bot_username","text":"/start"}
 ```
 
-## Output
+## Выход
 
-Each output line is a JSON event:
+Каждая исходящая строка — JSON-event.
+
+Основные типы:
 
 - `ack`
 - `state_update`
@@ -20,19 +24,19 @@ Each output line is a JSON event:
 - `error`
 - `timeout`
 
-`state_update` and `state_snapshot` include the current normalized chat view:
+## Что содержат `state_update` и `state_snapshot`
 
-- latest visible messages
-- inline buttons
-- pinned message summary
-- sync timestamp
-- diff from the previous snapshot when available
+- последние видимые сообщения чата
+- inline-кнопки
+- pinned summary
+- timestamp синка
+- diff относительно прошлого snapshot, если он есть
 
-## Typical flow
+## Типичный цикл
 
-1. send `/start`
-2. wait for the dashboard to appear
-3. click a visible button
-4. dump the state if manual inspection is needed
+1. отправить `/start`
+2. дождаться `wait`
+3. нажать видимую кнопку
+4. при необходимости сделать `dump_state`
 
-Because the protocol is JSONL, an agent can drive the tool directly without parsing a human shell.
+Поскольку это JSONL, агент может управлять инструментом напрямую без отдельной REPL-обвязки.

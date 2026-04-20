@@ -1,16 +1,16 @@
-# Scenario Format
+# Формат Сценариев
 
-Scenarios are newline-delimited JSON files. Each line is one command object.
+Сценарии — это `JSONL` файлы. Одна строка — одна команда.
 
-Blank lines and lines starting with `#` are ignored, which makes it safe to add short comments between steps.
+Пустые строки и строки, начинающиеся с `#`, игнорируются.
 
-## Why JSONL
+## Почему JSONL
 
-- the scenario runner uses the exact same protocol as interactive mode
-- there is no separate scenario DSL to maintain
-- every line is directly replayable through stdin
+- сценарии используют тот же формат, что и interactive mode
+- нет отдельного DSL, который надо поддерживать отдельно
+- любую строку можно буквально вставить в stdin interactive mode
 
-## Supported actions
+## Поддерживаемые actions
 
 - `send_text`
 - `send_photo`
@@ -20,24 +20,24 @@ Blank lines and lines starting with `#` are ignored, which makes it safe to add 
 - `wait`
 - `dump_state`
 
-## Common fields
+## Общие поля
 
-- `id` optional but recommended
-- `action` required
-- `chat` optional; falls back to the current chat or `TG_E2E_DEFAULT_CHAT`
-- `timeout_ms` optional; mainly used by `wait`
+- `id` — опционально, но очень желательно
+- `action` — обязательно
+- `chat` — опционально, если уже есть current chat или задан `TG_E2E_DEFAULT_CHAT`
+- `timeout_ms` — в основном для `wait`
 
-## Action fields
+## Поля по action
 
 - `send_text`: `text`
-- `send_photo`: `path`, optional `caption`
+- `send_photo`: `path`, опционально `caption`
 - `send_voice`: `path`
 - `send_audio`: `path`
 - `click_button`: `button_text`
-- `wait`: optional `timeout_ms`
-- `dump_state`: no extra fields
+- `wait`: опционально `timeout_ms`
+- `dump_state`: без дополнительных полей
 
-## Example
+## Пример
 
 ```json
 {"id":"start","action":"send_text","text":"/start"}
@@ -45,4 +45,6 @@ Blank lines and lines starting with `#` are ignored, which makes it safe to add 
 {"id":"confirm","action":"click_button","button_text":"✅ Сохранить"}
 ```
 
-The runner stops on the first transport, runtime, or timeout error and then writes transcript artifacts.
+Runner останавливается на первой transport/runtime/timeout ошибке и сохраняет transcript artifacts.
+
+Готовый полный suite смотри в [docs/scenario-suite.md](./scenario-suite.md).

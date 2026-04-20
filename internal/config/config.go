@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+const (
+	DefaultSessionPath         = ".sessions/user.json"
+	DefaultTranscriptOutputDir = "artifacts/transcripts"
+	DefaultHistoryLimit        = 50
+	DefaultSyncIntervalMS      = 1200
+)
+
 type Config struct {
 	AppID               int
 	AppHash             string
@@ -24,11 +31,11 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	historyLimit, err := intFromEnv("TG_E2E_HISTORY_LIMIT", 50)
+	historyLimit, err := intFromEnv("TG_E2E_HISTORY_LIMIT", DefaultHistoryLimit)
 	if err != nil {
 		return Config{}, err
 	}
-	syncIntervalMS, err := intFromEnv("TG_E2E_SYNC_INTERVAL_MS", 1200)
+	syncIntervalMS, err := intFromEnv("TG_E2E_SYNC_INTERVAL_MS", DefaultSyncIntervalMS)
 	if err != nil {
 		return Config{}, err
 	}
@@ -37,8 +44,8 @@ func Load() (Config, error) {
 		AppHash:             stringsOrEmpty(os.Getenv("TG_E2E_APP_HASH")),
 		Phone:               stringsOrEmpty(os.Getenv("TG_E2E_PHONE")),
 		Password:            stringsOrEmpty(os.Getenv("TG_E2E_PASSWORD")),
-		SessionPath:         defaultString(os.Getenv("TG_E2E_SESSION_PATH"), ".sessions/user.json"),
-		TranscriptOutputDir: defaultString(os.Getenv("TG_E2E_TRANSCRIPT_DIR"), "artifacts/transcripts"),
+		SessionPath:         defaultString(os.Getenv("TG_E2E_SESSION_PATH"), DefaultSessionPath),
+		TranscriptOutputDir: defaultString(os.Getenv("TG_E2E_TRANSCRIPT_DIR"), DefaultTranscriptOutputDir),
 		DefaultChat:         stringsOrEmpty(os.Getenv("TG_E2E_DEFAULT_CHAT")),
 		HistoryLimit:        historyLimit,
 		SyncInterval:        time.Duration(syncIntervalMS) * time.Millisecond,

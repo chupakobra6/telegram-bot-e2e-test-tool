@@ -1,0 +1,9 @@
+# Covers default chat fallback, click_button on dashboard, wait on pinned edit,
+# and back navigation through the same pinned message.
+{"id":"start_reset","action":"send_text","text":"/start"}
+{"id":"wait_reset","action":"wait","timeout_ms":12000}
+{"id":"open_stats","action":"click_button","button_text":"📊 Статистика"}
+{"id":"wait_stats","action":"wait","timeout_ms":12000}
+{"id":"back_home","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home","action":"wait","timeout_ms":12000}
+{"id":"dump_navigation","action":"dump_state"}

@@ -1,4 +1,23 @@
-.PHONY: setup fmt test login interactive run-scenario print-config
+SHELL := /bin/bash
+ENV_RUN := set -a; [ -f .env ] && source ./.env; set +a;
+SCENARIO ?= examples/shelfy-smoke.jsonl
+
+.DEFAULT_GOAL := help
+
+.PHONY: help setup fmt test fixtures login interactive run-scenario run-suite print-config doctor clean
+
+help:
+	@printf "Доступные команды:\\n"
+	@printf "  make setup          # go mod tidy\\n"
+	@printf "  make test           # go test ./...\\n"
+	@printf "  make doctor         # показать effective config и наличие session file\\n"
+	@printf "  make print-config   # вывести компактный config summary\\n"
+	@printf "  make login          # создать MTProto session\\n"
+	@printf "  make interactive    # JSONL interactive mode\\n"
+	@printf "  make run-scenario   # выполнить один JSONL сценарий (SCENARIO=...)\\n"
+	@printf "  make fixtures       # сгенерировать локальные media fixtures\\n"
+	@printf "  make run-suite      # прогнать полный v1 suite\\n"
+	@printf "  make clean          # удалить локальные transcripts и fixtures\\n"
 
 setup:
 	go mod tidy
@@ -9,14 +28,26 @@ fmt:
 test:
 	go test ./...
 
+fixtures:
+	./scripts/generate-fixtures.sh
+
 login:
-	go run ./cmd/tg-e2e-tool login
+	$(ENV_RUN) go run ./cmd/tg-e2e-tool login
+
+doctor:
+	$(ENV_RUN) go run ./cmd/tg-e2e-tool doctor
 
 interactive:
-	go run ./cmd/tg-e2e-tool interactive
+	$(ENV_RUN) go run ./cmd/tg-e2e-tool interactive
 
 run-scenario:
-	go run ./cmd/tg-e2e-tool run-scenario examples/shelfy-smoke.jsonl
+	$(ENV_RUN) go run ./cmd/tg-e2e-tool run-scenario $(SCENARIO)
+
+run-suite: fixtures
+	$(ENV_RUN) ./scripts/run-suite.sh
 
 print-config:
-	go run ./cmd/tg-e2e-tool print-config
+	$(ENV_RUN) go run ./cmd/tg-e2e-tool print-config
+
+clean:
+	rm -rf artifacts/transcripts artifacts/fixtures

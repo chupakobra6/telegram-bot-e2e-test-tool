@@ -124,11 +124,12 @@ func TestExecuteWaitDetectsVisibleChange(t *testing.T) {
 	}
 }
 
-func TestExecuteWaitConsumesPendingPostActionChange(t *testing.T) {
+func TestExecuteWaitUsesLastKnownStateAsBaseline(t *testing.T) {
 	transport := &fakeTransport{
 		snapshots: []state.ChatState{
 			{Target: "@bot", Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "old"}}},
 			{Target: "@bot", Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "new"}}},
+			{Target: "@bot", Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "newer"}}},
 		},
 	}
 	var out bytes.Buffer
@@ -155,13 +156,16 @@ func TestExecuteWaitConsumesPendingPostActionChange(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("wait error = %v", err)
 	}
-	if transport.syncCalls != syncCallsBeforeWait {
-		t.Fatalf("expected wait to consume pending change without extra sync, got %d -> %d", syncCallsBeforeWait, transport.syncCalls)
+	if transport.syncCalls <= syncCallsBeforeWait {
+		t.Fatalf("expected wait to perform another sync, got %d -> %d", syncCallsBeforeWait, transport.syncCalls)
 	}
 
 	events := decodeEvents(t, out.Bytes())
 	if events[len(events)-1].Type != "state_update" {
 		t.Fatalf("expected pending state_update, got %+v", events[len(events)-1])
+	}
+	if events[len(events)-1].Diff == nil || len(events[len(events)-1].Diff.Changed) != 1 || events[len(events)-1].Diff.Changed[0] != 1 {
+		t.Fatalf("expected wait to observe follow-up change, got %+v", events[len(events)-1].Diff)
 	}
 }
 

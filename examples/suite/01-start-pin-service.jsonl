@@ -1,0 +1,5 @@
+# Covers explicit @username targeting, send_text, wait, dump_state,
+# pinned summary and service messages for pin events.
+{"id":"start_explicit","action":"send_text","chat":"@yaminotoubot","text":"/start"}
+{"id":"wait_dashboard","action":"wait","timeout_ms":12000}
+{"id":"dump_after_start","action":"dump_state"}
