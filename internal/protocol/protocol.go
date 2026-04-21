@@ -12,14 +12,15 @@ import (
 )
 
 type Command struct {
-	ID         string `json:"id,omitempty"`
-	Action     string `json:"action"`
-	Chat       string `json:"chat,omitempty"`
-	TimeoutMS  int    `json:"timeout_ms,omitempty"`
-	Text       string `json:"text,omitempty"`
-	Path       string `json:"path,omitempty"`
-	Caption    string `json:"caption,omitempty"`
-	ButtonText string `json:"button_text,omitempty"`
+	ID            string `json:"id,omitempty"`
+	Action        string `json:"action"`
+	Chat          string `json:"chat,omitempty"`
+	TimeoutMS     int    `json:"timeout_ms,omitempty"`
+	MessageOffset int    `json:"message_offset,omitempty"`
+	Text          string `json:"text,omitempty"`
+	Path          string `json:"path,omitempty"`
+	Caption       string `json:"caption,omitempty"`
+	ButtonText    string `json:"button_text,omitempty"`
 }
 
 type Event struct {
@@ -50,13 +51,17 @@ func (c Command) Validate() error {
 		return fmt.Errorf("command action is required")
 	}
 	switch c.Action {
+	case "select_chat":
+		if strings.TrimSpace(c.Chat) == "" {
+			return fmt.Errorf("select_chat requires chat")
+		}
 	case "send_text":
 		if strings.TrimSpace(c.Text) == "" {
 			return fmt.Errorf("send_text requires text")
 		}
-	case "send_photo":
+	case "send_photo", "send_document":
 		if strings.TrimSpace(c.Path) == "" {
-			return fmt.Errorf("send_photo requires path")
+			return fmt.Errorf("%s requires path", c.Action)
 		}
 	case "send_voice", "send_audio":
 		if strings.TrimSpace(c.Path) == "" {
@@ -65,6 +70,9 @@ func (c Command) Validate() error {
 	case "click_button":
 		if strings.TrimSpace(c.ButtonText) == "" {
 			return fmt.Errorf("click_button requires button_text")
+		}
+		if c.MessageOffset < 0 {
+			return fmt.Errorf("click_button requires message_offset >= 0")
 		}
 	case "wait", "dump_state":
 	default:

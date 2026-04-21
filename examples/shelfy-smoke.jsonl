@@ -1,4 +1,5 @@
-# Assumes TG_E2E_DEFAULT_CHAT points to your bot private chat.
+# Replace @your_bot_username with the bot you are testing.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
 {"id":"start","action":"send_text","text":"/start"}
 {"id":"wait-dashboard","action":"wait","timeout_ms":5000}
 {"id":"send-product","action":"send_text","text":"молоко до пятницы"}

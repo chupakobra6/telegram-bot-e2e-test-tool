@@ -1,25 +1,66 @@
 package scenario
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/protocol"
 )
 
-func Load(path string) ([]protocol.Command, error) {
+const DefaultChatPlaceholder = "@your_bot_username"
+const DefaultFixturePlaceholder = "@fixtures/"
+const DefaultFixtureDir = "artifacts/fixtures"
+
+type ReadOptions struct {
+	TargetChat string
+	FixtureDir string
+}
+
+func Read(path string, fn func(protocol.Command) error) error {
+	return ReadWithOptions(path, ReadOptions{}, fn)
+}
+
+func ReadWithOptions(path string, opts ReadOptions, fn func(protocol.Command) error) error {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open scenario: %w", err)
+		return fmt.Errorf("open scenario: %w", err)
 	}
 	defer file.Close()
 
-	commands := make([]protocol.Command, 0, 16)
+	baseDir := filepath.Dir(path)
 	if err := protocol.ReadCommands(file, func(cmd protocol.Command) error {
-		commands = append(commands, cmd)
-		return nil
+		if cmd.Chat == DefaultChatPlaceholder {
+			if opts.TargetChat == "" {
+				return fmt.Errorf("scenario uses %s; provide CHAT=@your_bot_username for this run", DefaultChatPlaceholder)
+			}
+			cmd.Chat = opts.TargetChat
+		}
+		if cmd.Path != "" {
+			switch {
+			case strings.HasPrefix(cmd.Path, DefaultFixturePlaceholder):
+				fixtureDir := opts.FixtureDir
+				if strings.TrimSpace(fixtureDir) == "" {
+					fixtureDir = DefaultFixtureDir
+				}
+				cmd.Path = filepath.Join(fixtureDir, strings.TrimPrefix(cmd.Path, DefaultFixturePlaceholder))
+			case !filepath.IsAbs(cmd.Path):
+				cmd.Path = filepath.Join(baseDir, cmd.Path)
+			}
+		}
+		return fn(cmd)
 	}); err != nil {
-		return nil, fmt.Errorf("read scenario: %w", err)
+		return fmt.Errorf("read scenario: %w", err)
 	}
-	return commands, nil
+	return nil
+}
+
+func UsesChatPlaceholder(path string) (bool, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("read scenario file: %w", err)
+	}
+	return bytes.Contains(body, []byte(DefaultChatPlaceholder)), nil
 }

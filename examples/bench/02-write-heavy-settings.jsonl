@@ -1,0 +1,19 @@
+# Write-heavy benchmark: repeated callback navigation from a prepared home dashboard without persistent setting changes.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"open_settings","action":"click_button","button_text":"⚙️ Настройки"}
+{"id":"wait_settings","action":"wait","timeout_ms":12000}
+{"id":"back_home_from_settings","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home_01","action":"wait","timeout_ms":12000}
+{"id":"open_stats","action":"click_button","button_text":"📊 Статистика"}
+{"id":"wait_stats","action":"wait","timeout_ms":12000}
+{"id":"back_home_from_stats","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home_02","action":"wait","timeout_ms":12000}
+{"id":"open_list","action":"click_button","button_text":"📋 Список"}
+{"id":"wait_list","action":"wait","timeout_ms":12000}
+{"id":"back_home_from_list","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home_03","action":"wait","timeout_ms":12000}
+{"id":"open_soon","action":"click_button","button_text":"⏰ Скоро"}
+{"id":"wait_soon","action":"wait","timeout_ms":12000}
+{"id":"back_home_from_soon","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home_04","action":"wait","timeout_ms":12000}
+{"id":"dump_write_heavy","action":"dump_state"}

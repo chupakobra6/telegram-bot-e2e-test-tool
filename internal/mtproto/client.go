@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gotd/td/session"
@@ -21,6 +22,7 @@ import (
 	"github.com/gotd/td/telegram/message/peer"
 	"github.com/gotd/td/telegram/message/styling"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/config"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/state"
 )
@@ -33,6 +35,19 @@ type Session struct {
 	raw    *tg.Client
 	sender *message.Sender
 	cache  map[string]resolvedTarget
+
+	mu              sync.Mutex
+	nextActionAt    time.Time
+	nextRPCAt       time.Time
+	floodWaits      int
+	transportFloods int
+	floodEvents     []FloodEvent
+
+	actionSpacing  time.Duration
+	rpcSpacing     time.Duration
+	pinnedTTL      time.Duration
+	pinnedCache    map[int64]pinnedCacheEntry
+	retryFloodWait bool
 }
 
 type resolvedTarget struct {
@@ -41,6 +56,31 @@ type resolvedTarget struct {
 	PeerID    int64
 	InputPeer tg.InputPeerClass
 }
+
+type pinnedCacheEntry struct {
+	pinned    *state.PinnedMessage
+	fetchedAt time.Time
+}
+
+type Stats struct {
+	FloodWaits      int
+	TransportFloods int
+}
+
+type FloodEvent struct {
+	At        time.Time
+	Operation string
+	Kind      string
+	Delay     time.Duration
+	Error     string
+}
+
+const (
+	maxFloodWaitRetries     = 3
+	defaultRPCTimeout       = 20 * time.Second
+	defaultMediaRPCTimeout  = 90 * time.Second
+	defaultDialogRPCTimeout = 30 * time.Second
+)
 
 func New(cfg config.Config) *Client {
 	return &Client{cfg: cfg}
@@ -130,9 +170,14 @@ func (c *Client) RunAuthorized(ctx context.Context, fn func(context.Context, *Se
 			return fmt.Errorf("telegram session is not authorized; run `tg-e2e-tool login` first")
 		}
 		session := &Session{
-			raw:    tg.NewClient(client),
-			sender: message.NewSender(tg.NewClient(client)),
-			cache:  map[string]resolvedTarget{},
+			raw:            tg.NewClient(client),
+			sender:         message.NewSender(tg.NewClient(client)),
+			cache:          map[string]resolvedTarget{},
+			actionSpacing:  c.cfg.ActionSpacing,
+			rpcSpacing:     c.cfg.RPCSpacing,
+			pinnedTTL:      c.cfg.PinnedCacheTTL,
+			pinnedCache:    map[int64]pinnedCacheEntry{},
+			retryFloodWait: true,
 		}
 		return fn(runCtx, session)
 	})
@@ -143,8 +188,10 @@ func (s *Session) SendText(ctx context.Context, chat string, text string) error 
 	if err != nil {
 		return err
 	}
-	_, err = s.sender.To(target.InputPeer).Text(ctx, text)
-	return err
+	return s.performRPC(ctx, "send_text", true, func(callCtx context.Context) error {
+		_, err := s.sender.To(target.InputPeer).Text(callCtx, text)
+		return err
+	})
 }
 
 func (s *Session) SendPhoto(ctx context.Context, chat string, path string, caption string) error {
@@ -153,12 +200,30 @@ func (s *Session) SendPhoto(ctx context.Context, chat string, path string, capti
 		return err
 	}
 	builder := s.sender.To(target.InputPeer).Upload(message.FromPath(path))
-	if strings.TrimSpace(caption) == "" {
-		_, err = builder.Photo(ctx)
-	} else {
-		_, err = builder.Photo(ctx, styling.Plain(caption))
+	return s.performRPC(ctx, "send_photo", true, func(callCtx context.Context) error {
+		if strings.TrimSpace(caption) == "" {
+			_, err = builder.Photo(callCtx)
+		} else {
+			_, err = builder.Photo(callCtx, styling.Plain(caption))
+		}
+		return err
+	})
+}
+
+func (s *Session) SendDocument(ctx context.Context, chat string, path string, caption string) error {
+	target, err := s.resolveTarget(ctx, chat)
+	if err != nil {
+		return err
 	}
-	return err
+	builder := s.sender.To(target.InputPeer).Upload(message.FromPath(path))
+	return s.performRPC(ctx, "send_document", true, func(callCtx context.Context) error {
+		if strings.TrimSpace(caption) == "" {
+			_, err = builder.File(callCtx)
+		} else {
+			_, err = builder.File(callCtx, styling.Plain(caption))
+		}
+		return err
+	})
 }
 
 func (s *Session) SendVoice(ctx context.Context, chat string, path string) error {
@@ -166,8 +231,10 @@ func (s *Session) SendVoice(ctx context.Context, chat string, path string) error
 	if err != nil {
 		return err
 	}
-	_, err = s.sender.To(target.InputPeer).Upload(message.FromPath(path)).Voice(ctx)
-	return err
+	return s.performRPC(ctx, "send_voice", true, func(callCtx context.Context) error {
+		_, err := s.sender.To(target.InputPeer).Upload(message.FromPath(path)).Voice(callCtx)
+		return err
+	})
 }
 
 func (s *Session) SendAudio(ctx context.Context, chat string, path string) error {
@@ -175,8 +242,10 @@ func (s *Session) SendAudio(ctx context.Context, chat string, path string) error
 	if err != nil {
 		return err
 	}
-	_, err = s.sender.To(target.InputPeer).Upload(message.FromPath(path)).Audio(ctx)
-	return err
+	return s.performRPC(ctx, "send_audio", true, func(callCtx context.Context) error {
+		_, err := s.sender.To(target.InputPeer).Upload(message.FromPath(path)).Audio(callCtx)
+		return err
+	})
 }
 
 func (s *Session) ClickButton(ctx context.Context, chat string, messageID int, data []byte) error {
@@ -184,12 +253,14 @@ func (s *Session) ClickButton(ctx context.Context, chat string, messageID int, d
 	if err != nil {
 		return err
 	}
-	_, err = s.raw.MessagesGetBotCallbackAnswer(ctx, &tg.MessagesGetBotCallbackAnswerRequest{
-		Peer:  target.InputPeer,
-		MsgID: messageID,
-		Data:  data,
+	return s.performRPC(ctx, "click_button", true, func(callCtx context.Context) error {
+		_, err := s.raw.MessagesGetBotCallbackAnswer(callCtx, &tg.MessagesGetBotCallbackAnswerRequest{
+			Peer:  target.InputPeer,
+			MsgID: messageID,
+			Data:  data,
+		})
+		return err
 	})
-	return err
 }
 
 func (s *Session) SyncChat(ctx context.Context, chat string, limit int) (state.ChatState, error) {
@@ -197,15 +268,20 @@ func (s *Session) SyncChat(ctx context.Context, chat string, limit int) (state.C
 	if err != nil {
 		return state.ChatState{}, err
 	}
-	result, err := s.raw.MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
-		Peer:       target.InputPeer,
-		OffsetID:   0,
-		OffsetDate: 0,
-		AddOffset:  0,
-		Limit:      limit,
-		MaxID:      0,
-		MinID:      0,
-		Hash:       0,
+	var result tg.MessagesMessagesClass
+	err = s.performRPC(ctx, "sync_history", false, func(callCtx context.Context) error {
+		var callErr error
+		result, callErr = s.raw.MessagesGetHistory(callCtx, &tg.MessagesGetHistoryRequest{
+			Peer:       target.InputPeer,
+			OffsetID:   0,
+			OffsetDate: 0,
+			AddOffset:  0,
+			Limit:      limit,
+			MaxID:      0,
+			MinID:      0,
+			Hash:       0,
+		})
+		return callErr
 	})
 	if err != nil {
 		return state.ChatState{}, err
@@ -264,8 +340,13 @@ func (s *Session) resolveTarget(ctx context.Context, raw string) (resolvedTarget
 	}
 
 	username := strings.TrimPrefix(raw, "@")
-	resolved, err := s.raw.ContactsResolveUsername(ctx, &tg.ContactsResolveUsernameRequest{
-		Username: username,
+	var resolved *tg.ContactsResolvedPeer
+	err := s.performRPC(ctx, "resolve_username", false, func(callCtx context.Context) error {
+		var callErr error
+		resolved, callErr = s.raw.ContactsResolveUsername(callCtx, &tg.ContactsResolveUsernameRequest{
+			Username: username,
+		})
+		return callErr
 	})
 	if err != nil {
 		return resolvedTarget{}, fmt.Errorf("resolve username %q: %w", raw, err)
@@ -285,6 +366,254 @@ func (s *Session) resolveTarget(ctx context.Context, raw string) (resolvedTarget
 	s.cache[raw] = target
 	s.cache[strconv.FormatInt(target.PeerID, 10)] = target
 	return target, nil
+}
+
+func withFloodWaitRetry(ctx context.Context, fn func() error) error {
+	return withFloodWaitRetrySleep(ctx, sleepContext, fn)
+}
+
+func withFloodWaitRetrySleep(ctx context.Context, sleeper func(context.Context, time.Duration) error, fn func() error) error {
+	var lastErr error
+	for attempt := 0; attempt < maxFloodWaitRetries; attempt++ {
+		if attempt > 0 {
+			if delay, ok := floodWaitDelay(lastErr); ok {
+				if err := sleeper(ctx, delay); err != nil {
+					return err
+				}
+			}
+		}
+		if err := fn(); err != nil {
+			lastErr = err
+			if _, ok := floodWaitDelay(err); ok && attempt < maxFloodWaitRetries-1 {
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+	return lastErr
+}
+
+func floodWaitDelay(err error) (time.Duration, bool) {
+	delay, ok := tgerr.AsFloodWait(err)
+	if !ok {
+		return 0, false
+	}
+	if delay <= 0 {
+		return time.Second, true
+	}
+	return delay, true
+}
+
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (s *Session) performRPC(ctx context.Context, operation string, outgoing bool, fn func(context.Context) error) error {
+	if outgoing {
+		if err := s.beforeOutgoingAction(ctx); err != nil {
+			return err
+		}
+	}
+	attempt := func() error {
+		if err := s.beforeRPC(ctx); err != nil {
+			return err
+		}
+		callCtx, cancel := context.WithTimeout(ctx, rpcTimeoutForOperation(operation))
+		defer cancel()
+		return fn(callCtx)
+	}
+
+	var err error
+	if s.floodWaitRetryEnabled() {
+		err = withFloodWaitRetrySleep(ctx, func(ctx context.Context, delay time.Duration) error {
+			s.noteFloodWait(operation, delay)
+			return sleepContext(ctx, delay)
+		}, attempt)
+	} else {
+		err = attempt()
+		if delay, ok := floodWaitDelay(err); ok {
+			s.noteFloodWait(operation, delay)
+		}
+	}
+	if isTransportFlood(err) {
+		s.noteTransportFlood(operation, err)
+	}
+	return err
+}
+
+func rpcTimeoutForOperation(operation string) time.Duration {
+	switch operation {
+	case "send_photo", "send_document", "send_voice", "send_audio":
+		return defaultMediaRPCTimeout
+	case "get_dialogs":
+		return defaultDialogRPCTimeout
+	default:
+		return defaultRPCTimeout
+	}
+}
+
+func (s *Session) beforeOutgoingAction(ctx context.Context) error {
+	delay := s.reserveActionSlot(time.Now())
+	if delay <= 0 {
+		return nil
+	}
+	return sleepContext(ctx, delay)
+}
+
+func (s *Session) beforeRPC(ctx context.Context) error {
+	delay := s.reserveRPCSlot(time.Now())
+	if delay <= 0 {
+		return nil
+	}
+	return sleepContext(ctx, delay)
+}
+
+func (s *Session) reserveActionSlot(now time.Time) time.Duration {
+	if s.actionSpacing <= 0 {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.nextActionAt.IsZero() || s.nextActionAt.Before(now) {
+		s.nextActionAt = now
+	}
+	delay := s.nextActionAt.Sub(now)
+	s.nextActionAt = s.nextActionAt.Add(s.actionSpacing)
+	return delay
+}
+
+func (s *Session) reserveRPCSlot(now time.Time) time.Duration {
+	if s.rpcSpacing <= 0 {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.nextRPCAt.IsZero() || s.nextRPCAt.Before(now) {
+		s.nextRPCAt = now
+	}
+	delay := s.nextRPCAt.Sub(now)
+	s.nextRPCAt = s.nextRPCAt.Add(s.rpcSpacing)
+	return delay
+}
+
+func (s *Session) noteFloodWait(operation string, delay time.Duration) {
+	if delay <= 0 {
+		delay = time.Second
+	}
+	now := time.Now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.floodWaits++
+	s.appendFloodEventLocked(FloodEvent{
+		At:        now.UTC(),
+		Operation: operation,
+		Kind:      "flood_wait",
+		Delay:     delay,
+	})
+
+	nextRPCAt := now.Add(delay + s.rpcSpacing)
+	if nextRPCAt.After(s.nextRPCAt) {
+		s.nextRPCAt = nextRPCAt
+	}
+	nextActionAt := now.Add(delay + s.actionSpacing)
+	if nextActionAt.After(s.nextActionAt) {
+		s.nextActionAt = nextActionAt
+	}
+}
+
+func (s *Session) noteTransportFlood(operation string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transportFloods++
+	s.appendFloodEventLocked(FloodEvent{
+		At:        time.Now().UTC(),
+		Operation: operation,
+		Kind:      "transport_flood",
+		Error:     err.Error(),
+	})
+}
+
+func (s *Session) Stats() Stats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return Stats{
+		FloodWaits:      s.floodWaits,
+		TransportFloods: s.transportFloods,
+	}
+}
+
+func (s *Session) FloodEvents() []FloodEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	events := make([]FloodEvent, len(s.floodEvents))
+	copy(events, s.floodEvents)
+	return events
+}
+
+func (s *Session) ConfigurePacing(actionSpacing time.Duration, rpcSpacing time.Duration, pinnedTTL time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.actionSpacing = actionSpacing
+	s.rpcSpacing = rpcSpacing
+	s.pinnedTTL = pinnedTTL
+}
+
+func (s *Session) SetFloodWaitRetry(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retryFloodWait = enabled
+}
+
+func (s *Session) floodWaitRetryEnabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retryFloodWait
+}
+
+func (s *Session) appendFloodEventLocked(event FloodEvent) {
+	s.floodEvents = append(s.floodEvents, event)
+	if len(s.floodEvents) > 128 {
+		s.floodEvents = append([]FloodEvent(nil), s.floodEvents[len(s.floodEvents)-128:]...)
+	}
+}
+
+func (s *Session) Cooldown(ctx context.Context, extra time.Duration) error {
+	now := time.Now()
+
+	s.mu.Lock()
+	waitUntil := now
+	if s.nextActionAt.After(waitUntil) {
+		waitUntil = s.nextActionAt
+	}
+	if s.nextRPCAt.After(waitUntil) {
+		waitUntil = s.nextRPCAt
+	}
+	s.mu.Unlock()
+
+	delay := waitUntil.Sub(now) + extra
+	if delay <= 0 {
+		return nil
+	}
+	return sleepContext(ctx, delay)
+}
+
+func isTransportFlood(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "transport flood")
 }
 
 func (s *Session) resolveNumeric(ctx context.Context, id int64, raw string) (resolvedTarget, error) {
@@ -626,20 +955,26 @@ func sentCodeTypeSummary(sentCode *tg.AuthSentCode) string {
 }
 
 func (s *Session) lookupPinned(ctx context.Context, target resolvedTarget, visible []state.VisibleMessage) (*state.PinnedMessage, error) {
-	for _, msg := range visible {
-		if msg.Pinned {
-			return &state.PinnedMessage{
-				MessageID: msg.ID,
-				Text:      msg.Text,
-			}, nil
+	if pinned := pinnedFromVisible(visible); pinned != nil {
+		s.storePinnedCache(target.PeerID, pinned)
+		return clonePinnedMessage(pinned), nil
+	}
+	if !visibleHasPinnedRefreshSignal(visible) {
+		if pinned, ok := s.loadPinnedCache(target.PeerID, time.Now()); ok {
+			return pinned, nil
 		}
 	}
 
-	result, err := s.raw.MessagesSearch(ctx, &tg.MessagesSearchRequest{
-		Peer:   target.InputPeer,
-		Q:      "",
-		Filter: &tg.InputMessagesFilterPinned{},
-		Limit:  10,
+	var result tg.MessagesMessagesClass
+	err := s.performRPC(ctx, "search_pinned", false, func(callCtx context.Context) error {
+		var callErr error
+		result, callErr = s.raw.MessagesSearch(callCtx, &tg.MessagesSearchRequest{
+			Peer:   target.InputPeer,
+			Q:      "",
+			Filter: &tg.InputMessagesFilterPinned{},
+			Limit:  10,
+		})
+		return callErr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("load pinned messages: %w", err)
@@ -659,12 +994,76 @@ func (s *Session) lookupPinned(ctx context.Context, target resolvedTarget, visib
 		}
 	}
 	if newest == nil {
+		s.storePinnedCache(target.PeerID, nil)
 		return nil, nil
 	}
-	return &state.PinnedMessage{
+	pinned := &state.PinnedMessage{
 		MessageID: newest.ID,
 		Text:      newest.Text,
-	}, nil
+	}
+	s.storePinnedCache(target.PeerID, pinned)
+	return clonePinnedMessage(pinned), nil
+}
+
+func pinnedFromVisible(visible []state.VisibleMessage) *state.PinnedMessage {
+	for _, msg := range visible {
+		if !msg.Pinned {
+			continue
+		}
+		return &state.PinnedMessage{
+			MessageID: msg.ID,
+			Text:      msg.Text,
+		}
+	}
+	return nil
+}
+
+func visibleHasPinnedRefreshSignal(visible []state.VisibleMessage) bool {
+	for _, msg := range visible {
+		if msg.Pinned {
+			return true
+		}
+		if msg.Kind == "service" && msg.Text == "[service] message pinned" {
+			return true
+		}
+	}
+	return false
+}
+
+func clonePinnedMessage(pinned *state.PinnedMessage) *state.PinnedMessage {
+	if pinned == nil {
+		return nil
+	}
+	copy := *pinned
+	return &copy
+}
+
+func (s *Session) loadPinnedCache(peerID int64, now time.Time) (*state.PinnedMessage, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.pinnedCache[peerID]
+	if !ok || now.Sub(entry.fetchedAt) > s.effectivePinnedTTL() {
+		return nil, false
+	}
+	return clonePinnedMessage(entry.pinned), true
+}
+
+func (s *Session) storePinnedCache(peerID int64, pinned *state.PinnedMessage) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.pinnedCache[peerID] = pinnedCacheEntry{
+		pinned:    clonePinnedMessage(pinned),
+		fetchedAt: time.Now(),
+	}
+}
+
+func (s *Session) effectivePinnedTTL() time.Duration {
+	if s.pinnedTTL <= 0 {
+		return 45 * time.Second
+	}
+	return s.pinnedTTL
 }
 
 func (s *Session) loadAllDialogEntities(ctx context.Context) (peer.Entities, error) {
@@ -674,13 +1073,18 @@ func (s *Session) loadAllDialogEntities(ctx context.Context) (peer.Entities, err
 	offsetDate := 0
 
 	for {
-		result, err := s.raw.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
-			ExcludePinned: false,
-			OffsetDate:    offsetDate,
-			OffsetID:      offsetID,
-			OffsetPeer:    offsetPeer,
-			Limit:         100,
-			Hash:          0,
+		var result tg.MessagesDialogsClass
+		err := s.performRPC(ctx, "get_dialogs", false, func(callCtx context.Context) error {
+			var callErr error
+			result, callErr = s.raw.MessagesGetDialogs(callCtx, &tg.MessagesGetDialogsRequest{
+				ExcludePinned: false,
+				OffsetDate:    offsetDate,
+				OffsetID:      offsetID,
+				OffsetPeer:    offsetPeer,
+				Limit:         100,
+				Hash:          0,
+			})
+			return callErr
 		})
 		if err != nil {
 			return peer.Entities{}, fmt.Errorf("load dialogs: %w", err)

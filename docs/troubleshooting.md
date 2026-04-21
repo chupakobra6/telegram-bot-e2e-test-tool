@@ -22,7 +22,17 @@ make doctor
 
 ## `chat is required`
 
-The command has no `chat` field, no current chat has been selected yet, and `TG_E2E_DEFAULT_CHAT` is not set.
+The command has no `chat` field and no current chat has been selected yet.
+
+Send `select_chat` first or pass `chat` explicitly on the command that needs it.
+
+## `another tg-e2e-tool runtime is already active for this session`
+
+Another local `login`, `interactive`, `run-scenario`, or `rate-sweep` process is already holding the runtime lock for this MTProto session.
+
+This is expected protection, not a random failure. Do not run live Telegram scenarios in parallel with the same test account.
+
+Wait for the other process to exit, then retry.
 
 ## `button ... not found in visible messages`
 
@@ -45,6 +55,27 @@ This usually means one of three things:
 - the bot did not respond
 - the timeout is too small
 - the expected change did not appear inside the visible history window
+
+## `FLOOD_WAIT`
+
+The tool already uses conservative defaults for:
+
+- sync polling
+- outgoing action spacing
+- generic MTProto RPC spacing
+- pinned-state caching
+
+If you still hit `FLOOD_WAIT`, do not start by turning pacing into permanent `.env` config.
+
+Use:
+
+```bash
+make rate-sweep CHAT=@your_bot_username
+```
+
+Then inspect which `action_spacing` candidate fails first.
+
+If you still need a slower account-safe profile for local debugging, prefer changing the sweep or runner invocation rather than keeping permanent tuning values in `.env`.
 
 ## Where transcripts are stored
 

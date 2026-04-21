@@ -1,7 +1,7 @@
 # Covers text ingestion, draft card appearance, click_button on draft,
 # removal of transient messages and updated dashboard counters.
-{"id":"start_text","action":"send_text","text":"/start"}
-{"id":"wait_start_text","action":"wait","timeout_ms":12000}
+# Assumes the suite already established a fresh home dashboard.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
 {"id":"send_product","action":"send_text","text":"молоко до пятницы"}
 {"id":"wait_draft","action":"wait","timeout_ms":12000}
 {"id":"confirm_draft","action":"click_button","button_text":"✅ Сохранить"}

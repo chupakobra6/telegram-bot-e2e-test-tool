@@ -1,7 +1,7 @@
 # Requires fixtures from `make fixtures`.
 # Covers send_voice and the first visible bot reaction in chat history.
-{"id":"start_voice","action":"send_text","text":"/start"}
-{"id":"wait_start_voice","action":"wait","timeout_ms":12000}
+# Assumes the suite already established a fresh home dashboard.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
 {"id":"send_voice","action":"send_voice","path":"artifacts/fixtures/e2e-voice.ogg"}
 {"id":"wait_voice_processing","action":"wait","timeout_ms":20000}
 {"id":"dump_voice_flow","action":"dump_state"}

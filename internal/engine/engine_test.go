@@ -35,8 +35,11 @@ func (f *fakeTransport) SendText(_ context.Context, chat string, text string) er
 }
 
 func (f *fakeTransport) SendPhoto(context.Context, string, string, string) error { return nil }
-func (f *fakeTransport) SendVoice(context.Context, string, string) error         { return nil }
-func (f *fakeTransport) SendAudio(context.Context, string, string) error         { return nil }
+func (f *fakeTransport) SendDocument(context.Context, string, string, string) error {
+	return nil
+}
+func (f *fakeTransport) SendVoice(context.Context, string, string) error { return nil }
+func (f *fakeTransport) SendAudio(context.Context, string, string) error { return nil }
 
 func (f *fakeTransport) ClickButton(_ context.Context, chat string, messageID int, data []byte) error {
 	f.clickCalls = append(f.clickCalls, struct {
@@ -61,16 +64,31 @@ func (f *fakeTransport) SyncChat(_ context.Context, _ string, _ int) (state.Chat
 
 func TestExecuteSendText(t *testing.T) {
 	transport := &fakeTransport{
-		snapshots: []state.ChatState{{
-			Target: "@bot",
-			Messages: []state.VisibleMessage{
-				{ID: 1, Sender: "bot", Text: "dashboard"},
+		snapshots: []state.ChatState{
+			{
+				Target: "@bot",
+				Messages: []state.VisibleMessage{
+					{ID: 1, Sender: "bot", Text: "dashboard"},
+				},
 			},
-		}},
+			{
+				Target: "@bot",
+				Messages: []state.VisibleMessage{
+					{ID: 1, Sender: "bot", Text: "dashboard"},
+				},
+			},
+		},
 	}
 	var out bytes.Buffer
-	engine := New(transport, transcript.New(), &out, "@bot", 50, time.Millisecond)
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
 
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "select",
+		Action: "select_chat",
+		Chat:   "@bot",
+	}); err != nil {
+		t.Fatalf("select_chat error = %v", err)
+	}
 	if err := engine.Execute(context.Background(), protocol.Command{
 		ID:     "start",
 		Action: "send_text",
@@ -86,11 +104,61 @@ func TestExecuteSendText(t *testing.T) {
 	}
 
 	events := decodeEvents(t, out.Bytes())
-	if len(events) != 2 {
-		t.Fatalf("expected 2 events, got %d", len(events))
+	if len(events) != 4 {
+		t.Fatalf("expected 4 events, got %d", len(events))
 	}
-	if events[0].Type != "ack" || events[1].Type != "state_snapshot" {
+	if events[0].Type != "ack" || events[1].Type != "state_snapshot" || events[2].Type != "ack" || events[3].Type != "state_snapshot" {
 		t.Fatalf("unexpected event sequence: %+v", events)
+	}
+}
+
+func TestExecuteFirstSendTextPrimesBaselineAndWaitConsumesPendingChange(t *testing.T) {
+	transport := &fakeTransport{
+		snapshots: []state.ChatState{
+			{Target: "@bot", Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "before"}}},
+			{Target: "@bot", Messages: []state.VisibleMessage{
+				{ID: 1, Sender: "bot", Text: "before"},
+				{ID: 2, Sender: "self", Text: "/start"},
+				{ID: 3, Sender: "bot", Text: "after"},
+			}},
+		},
+	}
+	var out bytes.Buffer
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "select",
+		Action: "select_chat",
+		Chat:   "@bot",
+	}); err != nil {
+		t.Fatalf("select_chat error = %v", err)
+	}
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "start",
+		Action: "send_text",
+		Text:   "/start",
+	}); err != nil {
+		t.Fatalf("send_text error = %v", err)
+	}
+	syncCallsBeforeWait := transport.syncCalls
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:        "wait",
+		Action:    "wait",
+		TimeoutMS: 50,
+	}); err != nil {
+		t.Fatalf("wait error = %v", err)
+	}
+	if transport.syncCalls != syncCallsBeforeWait {
+		t.Fatalf("expected wait to consume pending first-action change without another sync, got %d -> %d", syncCallsBeforeWait, transport.syncCalls)
+	}
+
+	events := decodeEvents(t, out.Bytes())
+	if events[len(events)-1].Type != "state_update" {
+		t.Fatalf("expected pending state_update, got %+v", events[len(events)-1])
+	}
+	if events[len(events)-1].Diff == nil || len(events[len(events)-1].Diff.Added) != 2 {
+		t.Fatalf("expected first-action pending diff to include new visible messages, got %+v", events[len(events)-1].Diff)
 	}
 }
 
@@ -102,7 +170,15 @@ func TestExecuteWaitDetectsVisibleChange(t *testing.T) {
 		},
 	}
 	var out bytes.Buffer
-	engine := New(transport, transcript.New(), &out, "@bot", 50, time.Millisecond)
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "select",
+		Action: "select_chat",
+		Chat:   "@bot",
+	}); err != nil {
+		t.Fatalf("select_chat error = %v", err)
+	}
 
 	if err := engine.Execute(context.Background(), protocol.Command{
 		ID:        "wait",
@@ -113,27 +189,35 @@ func TestExecuteWaitDetectsVisibleChange(t *testing.T) {
 	}
 
 	events := decodeEvents(t, out.Bytes())
-	if len(events) != 2 {
-		t.Fatalf("expected 2 events, got %d", len(events))
+	if len(events) != 4 {
+		t.Fatalf("expected 4 events, got %d", len(events))
 	}
-	if events[0].Type != "ack" || events[1].Type != "state_update" {
+	if events[2].Type != "ack" || events[3].Type != "state_update" {
 		t.Fatalf("unexpected event sequence: %+v", events)
 	}
-	if events[1].Diff == nil || !events[1].Diff.HasChanges() {
-		t.Fatalf("expected visible diff, got %+v", events[1].Diff)
+	if events[3].Diff == nil || !events[3].Diff.HasChanges() {
+		t.Fatalf("expected visible diff, got %+v", events[3].Diff)
 	}
 }
 
-func TestExecuteWaitUsesLastKnownStateAsBaseline(t *testing.T) {
+func TestExecuteWaitConsumesPendingVisibleChange(t *testing.T) {
 	transport := &fakeTransport{
 		snapshots: []state.ChatState{
 			{Target: "@bot", Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "old"}}},
+			{Target: "@bot", Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "old"}}},
 			{Target: "@bot", Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "new"}}},
-			{Target: "@bot", Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "newer"}}},
 		},
 	}
 	var out bytes.Buffer
-	engine := New(transport, transcript.New(), &out, "@bot", 50, time.Millisecond)
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "select",
+		Action: "select_chat",
+		Chat:   "@bot",
+	}); err != nil {
+		t.Fatalf("select_chat error = %v", err)
+	}
 
 	if err := engine.Execute(context.Background(), protocol.Command{
 		ID:     "baseline",
@@ -156,8 +240,8 @@ func TestExecuteWaitUsesLastKnownStateAsBaseline(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("wait error = %v", err)
 	}
-	if transport.syncCalls <= syncCallsBeforeWait {
-		t.Fatalf("expected wait to perform another sync, got %d -> %d", syncCallsBeforeWait, transport.syncCalls)
+	if transport.syncCalls != syncCallsBeforeWait {
+		t.Fatalf("expected wait to consume pending change without another sync, got %d -> %d", syncCallsBeforeWait, transport.syncCalls)
 	}
 
 	events := decodeEvents(t, out.Bytes())
@@ -166,6 +250,91 @@ func TestExecuteWaitUsesLastKnownStateAsBaseline(t *testing.T) {
 	}
 	if events[len(events)-1].Diff == nil || len(events[len(events)-1].Diff.Changed) != 1 || events[len(events)-1].Diff.Changed[0] != 1 {
 		t.Fatalf("expected wait to observe follow-up change, got %+v", events[len(events)-1].Diff)
+	}
+}
+
+func TestExecuteWaitUsesLastKnownStateAsBaselineWhenNoPendingExists(t *testing.T) {
+	transport := &fakeTransport{
+		snapshots: []state.ChatState{
+			{Target: "@bot", Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "before"}}},
+			{Target: "@bot", Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "before"}}},
+			{Target: "@bot", Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "after"}}},
+		},
+	}
+	var out bytes.Buffer
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "select",
+		Action: "select_chat",
+		Chat:   "@bot",
+	}); err != nil {
+		t.Fatalf("select_chat error = %v", err)
+	}
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "baseline",
+		Action: "dump_state",
+	}); err != nil {
+		t.Fatalf("dump_state error = %v", err)
+	}
+
+	syncCallsBeforeWait := transport.syncCalls
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:        "wait",
+		Action:    "wait",
+		TimeoutMS: 50,
+	}); err != nil {
+		t.Fatalf("wait error = %v", err)
+	}
+	if transport.syncCalls <= syncCallsBeforeWait {
+		t.Fatalf("expected wait to perform another sync, got %d -> %d", syncCallsBeforeWait, transport.syncCalls)
+	}
+}
+
+func TestExecuteSelectChatCapturesSnapshot(t *testing.T) {
+	transport := &fakeTransport{
+		snapshots: []state.ChatState{
+			{Target: "@bot", Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "dashboard"}}},
+		},
+	}
+	var out bytes.Buffer
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "select",
+		Action: "select_chat",
+		Chat:   "@bot",
+	}); err != nil {
+		t.Fatalf("select_chat error = %v", err)
+	}
+
+	if transport.syncCalls != 1 {
+		t.Fatalf("expected select_chat to sync once, got %d", transport.syncCalls)
+	}
+	events := decodeEvents(t, out.Bytes())
+	if len(events) != 2 || events[0].Type != "ack" || events[1].Type != "state_snapshot" {
+		t.Fatalf("unexpected event sequence: %+v", events)
+	}
+	if events[1].Snapshot == nil || events[1].Snapshot.Target != "@bot" {
+		t.Fatalf("unexpected snapshot: %+v", events[1].Snapshot)
+	}
+}
+
+func TestExecuteWithoutChatRequiresExplicitSelection(t *testing.T) {
+	var out bytes.Buffer
+	engine := New(&fakeTransport{}, transcript.New(), &out, 50, time.Millisecond)
+
+	err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "start",
+		Action: "send_text",
+		Text:   "/start",
+	})
+	if err == nil {
+		t.Fatal("expected missing chat error")
+	}
+	if err.Error() != "chat is required for send_text; use select_chat first or pass chat explicitly" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -196,7 +365,7 @@ func TestFindButtonUsesLatestVisibleBotMessage(t *testing.T) {
 		},
 	}
 
-	messageID, callbackData, err := findButton(snapshot, "Open")
+	messageID, callbackData, err := findButton(snapshot, "Open", 0)
 	if err != nil {
 		t.Fatalf("findButton() error = %v", err)
 	}
@@ -225,8 +394,37 @@ func TestFindButtonDoesNotFallBackToOlderBotMessage(t *testing.T) {
 		},
 	}
 
-	if _, _, err := findButton(snapshot, "Open"); err == nil {
+	if _, _, err := findButton(snapshot, "Open", 0); err == nil {
 		t.Fatal("expected error when button is missing from latest interactive message")
+	}
+}
+
+func TestFindButtonSupportsMessageOffset(t *testing.T) {
+	snapshot := state.ChatState{
+		Messages: []state.VisibleMessage{
+			{
+				ID:     1,
+				Sender: "bot",
+				Buttons: [][]state.InlineButton{{
+					{Text: "📊 Статистика", Kind: "callback", CallbackData: "b2xk"},
+				}},
+			},
+			{
+				ID:     2,
+				Sender: "bot",
+				Buttons: [][]state.InlineButton{{
+					{Text: "📊 Статистика", Kind: "callback", CallbackData: "bmV3"},
+				}},
+			},
+		},
+	}
+
+	messageID, callbackData, err := findButton(snapshot, "📊 Статистика", 1)
+	if err != nil {
+		t.Fatalf("findButton() error = %v", err)
+	}
+	if messageID != 1 || callbackData != "b2xk" {
+		t.Fatalf("unexpected offset button resolution: messageID=%d callbackData=%q", messageID, callbackData)
 	}
 }
 

@@ -15,7 +15,8 @@ scenarios=(
 
 for scenario in "${scenarios[@]}"; do
   echo "==> running $scenario"
-  go run ./cmd/tg-e2e-tool run-scenario "$scenario"
 done
+
+./scripts/run-scenario.sh "${scenarios[@]}"
 
 echo "suite completed"

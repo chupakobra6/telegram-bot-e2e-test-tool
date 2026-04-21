@@ -1,0 +1,10 @@
+# Read-heavy benchmark: repeated snapshot reads from an already prepared home chat.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"dump_01","action":"dump_state"}
+{"id":"dump_02","action":"dump_state"}
+{"id":"dump_03","action":"dump_state"}
+{"id":"dump_04","action":"dump_state"}
+{"id":"dump_05","action":"dump_state"}
+{"id":"dump_06","action":"dump_state"}
+{"id":"dump_07","action":"dump_state"}
+{"id":"dump_08","action":"dump_state"}
