@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,6 +30,10 @@ import (
 
 type Client struct {
 	cfg config.Config
+}
+
+type AuthStatus struct {
+	Authorized bool
 }
 
 type Session struct {
@@ -78,6 +83,7 @@ type FloodEvent struct {
 const (
 	maxFloodWaitRetries     = 3
 	defaultRPCTimeout       = 20 * time.Second
+	defaultClickRPCTimeout  = 10 * time.Second
 	defaultMediaRPCTimeout  = 90 * time.Second
 	defaultDialogRPCTimeout = 30 * time.Second
 )
@@ -153,6 +159,35 @@ func (c *Client) Login(ctx context.Context, in *os.File, out *os.File) error {
 	})
 }
 
+func (c *Client) AuthStatus(ctx context.Context) (AuthStatus, error) {
+	if c.cfg.AppID == 0 {
+		return AuthStatus{}, fmt.Errorf("TG_E2E_APP_ID is required")
+	}
+	if strings.TrimSpace(c.cfg.AppHash) == "" {
+		return AuthStatus{}, fmt.Errorf("TG_E2E_APP_HASH is required")
+	}
+	if strings.TrimSpace(c.cfg.SessionPath) == "" {
+		return AuthStatus{}, fmt.Errorf("TG_E2E_SESSION_PATH is required")
+	}
+	if err := ensureSessionDir(c.cfg.SessionPath); err != nil {
+		return AuthStatus{}, err
+	}
+	client := c.newTelegramClient()
+	var status AuthStatus
+	err := client.Run(ctx, func(runCtx context.Context) error {
+		authStatus, err := client.Auth().Status(runCtx)
+		if err != nil {
+			return fmt.Errorf("auth status: %w", err)
+		}
+		status.Authorized = authStatus.Authorized
+		return nil
+	})
+	if err != nil {
+		return AuthStatus{}, err
+	}
+	return status, nil
+}
+
 func (c *Client) RunAuthorized(ctx context.Context, fn func(context.Context, *Session) error) error {
 	if err := c.cfg.ValidateRuntime(); err != nil {
 		return err
@@ -167,7 +202,7 @@ func (c *Client) RunAuthorized(ctx context.Context, fn func(context.Context, *Se
 			return fmt.Errorf("auth status: %w", err)
 		}
 		if !status.Authorized {
-			return fmt.Errorf("telegram session is not authorized; run `tg-e2e-tool login` first")
+			return unauthorizedRuntimeError(c.cfg.SessionPath)
 		}
 		session := &Session{
 			raw:            tg.NewClient(client),
@@ -181,6 +216,13 @@ func (c *Client) RunAuthorized(ctx context.Context, fn func(context.Context, *Se
 		}
 		return fn(runCtx, session)
 	})
+}
+
+func unauthorizedRuntimeError(sessionPath string) error {
+	if sessionFileExists(sessionPath) {
+		return fmt.Errorf("telegram session is not authorized: session file exists at %s, but Telegram requires re-login; run `tg-e2e-tool login` again", sessionPath)
+	}
+	return fmt.Errorf("telegram session is not authorized: no valid Telegram session is available; run `tg-e2e-tool login`")
 }
 
 func (s *Session) SendText(ctx context.Context, chat string, text string) error {
@@ -259,6 +301,9 @@ func (s *Session) ClickButton(ctx context.Context, chat string, messageID int, d
 			MsgID: messageID,
 			Data:  data,
 		})
+		if isIgnorableClickButtonError(err) {
+			return nil
+		}
 		return err
 	})
 }
@@ -451,6 +496,8 @@ func (s *Session) performRPC(ctx context.Context, operation string, outgoing boo
 
 func rpcTimeoutForOperation(operation string) time.Duration {
 	switch operation {
+	case "click_button":
+		return defaultClickRPCTimeout
 	case "send_photo", "send_document", "send_voice", "send_audio":
 		return defaultMediaRPCTimeout
 	case "get_dialogs":
@@ -614,6 +661,34 @@ func isTransportFlood(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "transport flood")
+}
+
+func isBotResponseTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	return tgerr.Is(err, "BOT_RESPONSE_TIMEOUT")
+}
+
+func isIgnorableClickButtonError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return isBotResponseTimeout(err)
+}
+
+func isTimeoutLikeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "i/o timeout")
 }
 
 func (s *Session) resolveNumeric(ctx context.Context, id int64, raw string) (resolvedTarget, error) {
@@ -907,6 +982,14 @@ func ensureSessionDir(path string) error {
 	return os.MkdirAll(dir, 0o755)
 }
 
+func sessionFileExists(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func (c *Client) newTelegramClient() *telegram.Client {
 	return telegram.NewClient(c.cfg.AppID, c.cfg.AppHash, telegram.Options{
 		SessionStorage: &session.FileStorage{Path: c.cfg.SessionPath},
@@ -1000,6 +1083,7 @@ func (s *Session) lookupPinned(ctx context.Context, target resolvedTarget, visib
 	pinned := &state.PinnedMessage{
 		MessageID: newest.ID,
 		Text:      newest.Text,
+		Buttons:   cloneButtons(newest.Buttons),
 	}
 	s.storePinnedCache(target.PeerID, pinned)
 	return clonePinnedMessage(pinned), nil
@@ -1013,6 +1097,7 @@ func pinnedFromVisible(visible []state.VisibleMessage) *state.PinnedMessage {
 		return &state.PinnedMessage{
 			MessageID: msg.ID,
 			Text:      msg.Text,
+			Buttons:   cloneButtons(msg.Buttons),
 		}
 	}
 	return nil
@@ -1035,7 +1120,22 @@ func clonePinnedMessage(pinned *state.PinnedMessage) *state.PinnedMessage {
 		return nil
 	}
 	copy := *pinned
+	copy.Buttons = cloneButtons(pinned.Buttons)
 	return &copy
+}
+
+func cloneButtons(buttons [][]state.InlineButton) [][]state.InlineButton {
+	if len(buttons) == 0 {
+		return nil
+	}
+	cloned := make([][]state.InlineButton, len(buttons))
+	for i := range buttons {
+		if len(buttons[i]) == 0 {
+			continue
+		}
+		cloned[i] = append([]state.InlineButton(nil), buttons[i]...)
+	}
+	return cloned
 }
 
 func (s *Session) loadPinnedCache(peerID int64, now time.Time) (*state.PinnedMessage, bool) {

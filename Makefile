@@ -25,7 +25,7 @@ endif
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup fmt test fixtures login interactive run-scenario run-suite run-text-matrix rate-sweep print-config doctor clean
+.PHONY: help setup fmt test fixtures login interactive run-scenario run-block run-suite run-text-matrix rate-sweep print-config doctor clean
 
 help:
 	@printf "Available commands:\\n"
@@ -36,6 +36,7 @@ help:
 	@printf "  make login          # create an MTProto session\\n"
 	@printf "  make interactive    # JSONL interactive mode\\n"
 	@printf "  make run-scenario   # run one or more JSONL scenarios (SCENARIO=..., CHAT=...)\\n"
+	@printf "  make run-block      # run a stateful block with optional reset/template rendering (SCENARIO=..., CHAT=...)\\n"
 	@printf "  make run-text-matrix # run a text-case matrix from CASES=... (CHAT=...)\\n"
 	@printf "  make fixtures       # generate local media fixtures\\n"
 	@printf "  make run-suite      # run the full v1 suite (CHAT=...)\\n"
@@ -65,6 +66,9 @@ interactive:
 
 run-scenario:
 	CHAT="$(CHAT)" ./scripts/run-scenario.sh $(SCENARIO)
+
+run-block:
+	CHAT="$(CHAT)" CONTROL_URL="$(CONTROL_URL)" SHELFY_DEV_CONTROL_URL="$(SHELFY_DEV_CONTROL_URL)" RUN_PREFIX="$(RUN_PREFIX)" ./scripts/run-block.sh $(SCENARIO)
 
 run-text-matrix:
 	CHAT="$(CHAT)" CASES="$(CASES)" CANCEL_BUTTON_TEXT="$(CANCEL_BUTTON_TEXT)" WAIT_TIMEOUT_MS="$(WAIT_TIMEOUT_MS)" ./scripts/run-text-matrix.sh

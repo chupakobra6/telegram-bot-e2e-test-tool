@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -19,20 +20,39 @@ import (
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/runlock"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/scenario"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/transcript"
+	"github.com/igor/telegram-bot-e2e-test-tool/internal/triage"
 )
 
-const lastRunArtifactsFile = "last-run-artifacts.json"
+const (
+	lastRunArtifactsFile   = "last-run-artifacts.json"
+	lastRunSummaryJSONFile = "last-run-summary.json"
+	lastRunSummaryTextFile = "last-run-summary.txt"
+	lastFailureJSONFile    = "last-failure.json"
+	lastFailureTextFile    = "last-failure.txt"
+)
 
 type runScenarioArtifact struct {
-	ScenarioPath    string `json:"scenario_path"`
-	TranscriptJSON  string `json:"transcript_json"`
-	TranscriptText  string `json:"transcript_text"`
-	TranscriptLabel string `json:"transcript_label"`
+	ScenarioPath          string `json:"scenario_path"`
+	TranscriptJSON        string `json:"transcript_json"`
+	TranscriptText        string `json:"transcript_text"`
+	TranscriptCompactJSON string `json:"transcript_compact_json,omitempty"`
+	TranscriptCompactText string `json:"transcript_compact_text,omitempty"`
+	TranscriptLabel       string `json:"transcript_label"`
 }
 
 type runScenarioArtifactMap struct {
-	GeneratedAt time.Time             `json:"generated_at"`
-	Entries     []runScenarioArtifact `json:"entries"`
+	GeneratedAt        time.Time             `json:"generated_at"`
+	LastRunSummaryJSON string                `json:"last_run_summary_json,omitempty"`
+	LastRunSummaryText string                `json:"last_run_summary_text,omitempty"`
+	LastFailureJSON    string                `json:"last_failure_json,omitempty"`
+	LastFailureText    string                `json:"last_failure_text,omitempty"`
+	Entries            []runScenarioArtifact `json:"entries"`
+}
+
+type scenarioArtifacts struct {
+	Artifact   runScenarioArtifact
+	Summary    triage.SummaryRow
+	Transcript *transcript.Transcript
 }
 
 func main() {
@@ -66,7 +86,9 @@ func main() {
 			cfg.PinnedCacheTTL,
 		)
 	case "doctor":
-		printDoctor(cfg, os.Stdout)
+		printDoctor(cfg, os.Stdout, func(ctx context.Context) (mtproto.AuthStatus, error) {
+			return client.AuthStatus(ctx)
+		})
 	case "login":
 		if err := withRuntimeLock(cfg, func() error {
 			return client.Login(context.Background(), os.Stdin, os.Stdout)
@@ -101,7 +123,7 @@ func main() {
 		targetChat := strings.TrimSpace(os.Getenv("CHAT"))
 		err = withRuntimeLock(cfg, func() error {
 			return client.RunAuthorized(context.Background(), func(ctx context.Context, session *mtproto.Session) error {
-				artifacts := make([]runScenarioArtifact, 0, len(scenarioPaths))
+				artifacts := make([]scenarioArtifacts, 0, len(scenarioPaths))
 				for index, scenarioPath := range scenarioPaths {
 					tr := transcript.New()
 					runner := engine.New(session, tr, os.Stdout, cfg.HistoryWindow, cfg.SyncInterval)
@@ -109,16 +131,14 @@ func main() {
 					if err := runCommandStream(ctx, runner, func(fn func(protocol.Command) error) error {
 						return scenario.ReadWithOptions(scenarioPath, scenario.ReadOptions{TargetChat: targetChat}, fn)
 					}); err != nil {
-						artifact, saveErr := saveTranscript(cfg, tr, prefix, os.Stderr)
+						artifact, saveErr := saveScenarioArtifacts(cfg, tr, scenarioPath, prefix, os.Stderr)
 						if saveErr == nil {
-							artifact.ScenarioPath = scenarioPath
 							artifacts = append(artifacts, artifact)
 							saveLastRunArtifacts(cfg, artifacts, os.Stderr)
 						}
 						return err
 					}
-					artifact, _ := saveTranscript(cfg, tr, prefix, os.Stderr)
-					artifact.ScenarioPath = scenarioPath
+					artifact, _ := saveScenarioArtifacts(cfg, tr, scenarioPath, prefix, os.Stderr)
 					artifacts = append(artifacts, artifact)
 				}
 				saveLastRunArtifacts(cfg, artifacts, os.Stderr)
@@ -156,7 +176,9 @@ func printUsage(out *os.File) {
 	fmt.Fprintln(out, "rate-sweep options: --chat @bot --runs 3 --artifact-root artifacts/rate-sweep --prepare-scenario path.jsonl --min-action-ms 1800 --max-action-ms 3000 --resolution-ms 100")
 }
 
-func printDoctor(cfg config.Config, out *os.File) {
+type authStatusChecker func(context.Context) (mtproto.AuthStatus, error)
+
+func printDoctor(cfg config.Config, out io.Writer, check authStatusChecker) {
 	sessionExists := fileExists(cfg.SessionPath)
 	fmt.Fprintf(out, "app_id_set=%t\n", cfg.AppID != 0)
 	fmt.Fprintf(out, "app_hash_set=%t\n", strings.TrimSpace(cfg.AppHash) != "")
@@ -172,10 +194,41 @@ func printDoctor(cfg config.Config, out *os.File) {
 	fmt.Fprintf(out, "action_spacing=%s\n", cfg.ActionSpacing)
 	fmt.Fprintf(out, "rpc_spacing=%s\n", cfg.RPCSpacing)
 	fmt.Fprintf(out, "pinned_cache_ttl=%s\n", cfg.PinnedCacheTTL)
+	authStatus, authDetail := doctorAuthStatus(cfg, sessionExists, check)
+	fmt.Fprintf(out, "auth_status=%s\n", authStatus)
+	if authDetail != "" {
+		fmt.Fprintf(out, "auth_status_detail=%s\n", authDetail)
+	}
 	fmt.Fprintf(out, "http_proxy_set=%t\n", envSet("HTTP_PROXY"))
 	fmt.Fprintf(out, "https_proxy_set=%t\n", envSet("HTTPS_PROXY"))
 	fmt.Fprintf(out, "all_proxy_set=%t\n", envSet("ALL_PROXY"))
 	fmt.Fprintf(out, "no_proxy_set=%t\n", envSet("NO_PROXY"))
+}
+
+func doctorAuthStatus(cfg config.Config, sessionExists bool, check authStatusChecker) (string, string) {
+	if cfg.AppID == 0 || strings.TrimSpace(cfg.AppHash) == "" {
+		return "skipped", "set TG_E2E_APP_ID and TG_E2E_APP_HASH to verify live Telegram authorization"
+	}
+	if strings.TrimSpace(cfg.SessionPath) == "" {
+		return "skipped", "session path is empty"
+	}
+	if !sessionExists {
+		return "reauth_required", "session file is missing; run `tg-e2e-tool login`"
+	}
+	if check == nil {
+		return "check_failed", "no auth checker is configured"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	status, err := check(ctx)
+	if err != nil {
+		return "check_failed", oneLine(err.Error())
+	}
+	if status.Authorized {
+		return "authorized", "Telegram accepted the current session"
+	}
+	return "reauth_required", fmt.Sprintf("session file exists at %s, but Telegram requires re-login; run `tg-e2e-tool login` again", cfg.SessionPath)
 }
 
 func emitInteractiveReady(tr *transcript.Transcript, out *os.File, cfg config.Config) error {
@@ -231,10 +284,92 @@ func saveTranscript(cfg config.Config, tr *transcript.Transcript, prefix string,
 	}, nil
 }
 
-func saveLastRunArtifacts(cfg config.Config, entries []runScenarioArtifact, stderr *os.File) {
+func saveScenarioArtifacts(cfg config.Config, tr *transcript.Transcript, scenarioPath, prefix string, stderr *os.File) (scenarioArtifacts, error) {
+	artifact, err := saveTranscript(cfg, tr, prefix, stderr)
+	if err != nil {
+		return scenarioArtifacts{}, err
+	}
+
+	compact := triage.BuildCompactTranscript(tr)
+	compactJSONPath := filepath.Join(cfg.TranscriptOutputDir, prefix+".compact.json")
+	compactTextPath := filepath.Join(cfg.TranscriptOutputDir, prefix+".compact.txt")
+	compactBody, err := triage.MarshalIndent(compact)
+	if err != nil {
+		fmt.Fprintf(stderr, "warning: failed to encode compact transcript: %v\n", err)
+		return scenarioArtifacts{}, err
+	}
+	if err := os.WriteFile(compactJSONPath, compactBody, 0o644); err != nil {
+		fmt.Fprintf(stderr, "warning: failed to save compact JSON transcript: %v\n", err)
+		return scenarioArtifacts{}, err
+	}
+	if err := os.WriteFile(compactTextPath, []byte(compact.RenderText()), 0o644); err != nil {
+		fmt.Fprintf(stderr, "warning: failed to save compact text transcript: %v\n", err)
+		return scenarioArtifacts{}, err
+	}
+
+	artifact.ScenarioPath = scenarioPath
+	artifact.TranscriptCompactJSON = absPathOrFallback(compactJSONPath)
+	artifact.TranscriptCompactText = absPathOrFallback(compactTextPath)
+
+	summary := triage.BuildSummaryRow(
+		tr,
+		scenarioPath,
+		prefix,
+		artifact.TranscriptJSON,
+		artifact.TranscriptText,
+		artifact.TranscriptCompactJSON,
+		artifact.TranscriptCompactText,
+	)
+
+	return scenarioArtifacts{
+		Artifact:   artifact,
+		Summary:    summary,
+		Transcript: tr,
+	}, nil
+}
+
+func saveLastRunArtifacts(cfg config.Config, entries []scenarioArtifacts, stderr *os.File) {
+	summaryRows := make([]triage.SummaryRow, 0, len(entries))
+	artifactRows := make([]runScenarioArtifact, 0, len(entries))
+	transcripts := make(map[string]*transcript.Transcript, len(entries))
+	for _, entry := range entries {
+		summaryRows = append(summaryRows, entry.Summary)
+		artifactRows = append(artifactRows, entry.Artifact)
+		if entry.Transcript != nil {
+			transcripts[entry.Artifact.TranscriptLabel] = entry.Transcript
+		}
+	}
+	triage.SortRows(summaryRows)
+
+	summaryJSONPath := filepath.Join(cfg.TranscriptOutputDir, lastRunSummaryJSONFile)
+	summaryTextPath := filepath.Join(cfg.TranscriptOutputDir, lastRunSummaryTextFile)
+	if err := writeJSONFile(summaryJSONPath, summaryRows); err != nil {
+		fmt.Fprintf(stderr, "warning: failed to save run summary json: %v\n", err)
+	} else if err := os.WriteFile(summaryTextPath, []byte(triage.RenderSummaryText(summaryRows)), 0o644); err != nil {
+		fmt.Fprintf(stderr, "warning: failed to save run summary text: %v\n", err)
+	}
+
+	failure := triage.BuildLastFailure(summaryRows, transcripts)
+	lastFailureJSONPath := filepath.Join(cfg.TranscriptOutputDir, lastFailureJSONFile)
+	lastFailureTextPath := filepath.Join(cfg.TranscriptOutputDir, lastFailureTextFile)
+	if failure != nil {
+		if err := writeJSONFile(lastFailureJSONPath, failure); err != nil {
+			fmt.Fprintf(stderr, "warning: failed to save last failure json: %v\n", err)
+		} else if err := os.WriteFile(lastFailureTextPath, []byte(failure.RenderText()), 0o644); err != nil {
+			fmt.Fprintf(stderr, "warning: failed to save last failure text: %v\n", err)
+		}
+	} else {
+		_ = os.Remove(lastFailureJSONPath)
+		_ = os.Remove(lastFailureTextPath)
+	}
+
 	body, err := json.MarshalIndent(runScenarioArtifactMap{
-		GeneratedAt: time.Now().UTC(),
-		Entries:     entries,
+		GeneratedAt:        time.Now().UTC(),
+		LastRunSummaryJSON: absPathOrFallback(summaryJSONPath),
+		LastRunSummaryText: absPathOrFallback(summaryTextPath),
+		LastFailureJSON:    optionalAbsPath(lastFailureJSONPath, failure != nil),
+		LastFailureText:    optionalAbsPath(lastFailureTextPath, failure != nil),
+		Entries:            artifactRows,
 	}, "", "  ")
 	if err != nil {
 		fmt.Fprintf(stderr, "warning: failed to encode artifact map: %v\n", err)
@@ -249,6 +384,32 @@ func saveLastRunArtifacts(cfg config.Config, entries []runScenarioArtifact, stde
 		fmt.Fprintf(stderr, "warning: failed to save artifact map: %v\n", err)
 		return
 	}
+}
+
+func writeJSONFile(path string, value any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	body, err := triage.MarshalIndent(value)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, body, 0o644)
+}
+
+func absPathOrFallback(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return abs
+}
+
+func optionalAbsPath(path string, ok bool) string {
+	if !ok {
+		return ""
+	}
+	return absPathOrFallback(path)
 }
 
 func scenarioPrefix(path string) string {
@@ -285,6 +446,19 @@ func pathMode(rawValue string, defaultPath string) string {
 		return "default(" + defaultPath + ")"
 	}
 	return "override"
+}
+
+func oneLine(value string) string {
+	var buf bytes.Buffer
+	for _, r := range value {
+		switch r {
+		case '\n', '\r', '\t':
+			buf.WriteByte(' ')
+		default:
+			buf.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(buf.String()), " ")
 }
 
 func parseRateSweepArgs(args []string) (ratesweep.Options, []string, error) {

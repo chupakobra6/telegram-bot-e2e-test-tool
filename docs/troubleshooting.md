@@ -83,5 +83,15 @@ By default:
 
 - `artifacts/transcripts/*.json`
 - `artifacts/transcripts/*.txt`
+- `artifacts/transcripts/*.compact.json`
+- `artifacts/transcripts/*.compact.txt`
+- `artifacts/transcripts/last-run-summary.txt`
+- `artifacts/transcripts/last-failure.txt`
 
 If the path was overridden, `make doctor` will show the effective location.
+
+Prefer the rolling triage files first:
+
+1. `last-run-summary.txt`
+2. `last-failure.txt`
+3. only then the raw transcript pair for the failing scenario

@@ -36,8 +36,9 @@ type InlineButton struct {
 }
 
 type PinnedMessage struct {
-	MessageID int    `json:"message_id"`
-	Text      string `json:"text,omitempty"`
+	MessageID int              `json:"message_id"`
+	Text      string           `json:"text,omitempty"`
+	Buttons   [][]InlineButton `json:"buttons,omitempty"`
 }
 
 type ChatDiff struct {

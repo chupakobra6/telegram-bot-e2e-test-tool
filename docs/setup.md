@@ -38,6 +38,7 @@ make doctor
 - where the session file lives
 - where the runtime lock file lives
 - whether the session file exists
+- whether Telegram still considers the current session authorized
 - effective pacing/cache defaults
 - which proxy variables were picked up
 
@@ -76,7 +77,34 @@ CHAT=@your_bot_username ./scripts/run-scenario.sh \
   examples/suite/03-text-draft-confirm.jsonl
 ```
 
-After `run-scenario` completes, the tool refreshes `artifacts/transcripts/last-run-artifacts.json`. Use that file if another script needs explicit transcript paths instead of guessing file names.
+`scripts/run-scenario.sh` accepts absolute paths and paths relative to the directory you launched it from, so sibling product repos can call it without first `cd`-ing into the tool root.
+
+For stateful blocks with reset/template rendering, use the tool-owned runner instead of a product-local wrapper:
+
+```bash
+CHAT=@your_bot_username CONTROL_URL=http://127.0.0.1:8081 ./scripts/run-block.sh \
+  /absolute/path/to/00-home-ready.jsonl \
+  /absolute/path/to/11-timed-digest-setup.jsonl.tmpl
+```
+
+`scripts/run-block.sh` handles reset, `RUN_PREFIX`, `.jsonl.tmpl` rendering, optional `--clear-time`, and caller-relative path resolution. `CONTROL_URL` is the preferred control endpoint variable; `SHELFY_DEV_CONTROL_URL` remains a temporary compatibility alias.
+
+After `run-scenario` completes, the tool refreshes:
+
+- `artifacts/transcripts/last-run-artifacts.json`
+- `artifacts/transcripts/last-run-summary.json`
+- `artifacts/transcripts/last-run-summary.txt`
+- `artifacts/transcripts/last-failure.json`
+- `artifacts/transcripts/last-failure.txt` when the latest run failed
+
+Read the artifacts in this order:
+
+1. `last-run-summary.txt`
+2. `last-failure.txt` if present
+3. scenario-level `.compact.txt`
+4. raw `.txt` / `.json` only as a last step
+
+`click_button` is pinned-first by default: the tool will try the current pinned interactive screen before scanning visible history, even when that pinned message is outside the visible window. `message_offset` remains the explicit way to target older visible messages on purpose, for example when probing stale dashboards.
 
 External product repos can also reference tool-owned fixtures directly inside their scenarios with paths like:
 
@@ -94,6 +122,8 @@ make run-text-matrix \
   CASES=/absolute/path/to/date-cases.txt
 ```
 
+`CASES` may also be relative to the caller's working directory.
+
 Optional overrides:
 
 - `CANCEL_BUTTON_TEXT=↩️ Отмена`
@@ -106,7 +136,11 @@ make fixtures
 make run-suite CHAT=@your_bot_username
 ```
 
+`make fixtures` generates the PNG photo fixtures through the repo's own `fixturegen`, so photo and receipt OCR scenarios do not depend on macOS-only `qlmanage`.
+On non-macOS machines, it reuses existing speech fixtures if they are already present under `artifacts/fixtures/`. It refuses to silently generate fake sine-wave "speech" unless you explicitly opt in with `TG_E2E_ALLOW_SYNTHETIC_AUDIO_FIXTURES=1`.
+
 `make run-suite` keeps one MTProto session alive across the full suite instead of reconnecting between files.
+It also fails fast when `CHAT` is missing or the expected media fixtures are absent.
 Do not start another runtime command in parallel with the same Telegram account while the suite is running.
 The suite is intentionally ordered and stateful: it exercises `/start` once, then reuses that home dashboard in later scenarios.
 

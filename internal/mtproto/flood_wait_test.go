@@ -3,6 +3,10 @@ package mtproto
 import (
 	"context"
 	"errors"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,6 +144,41 @@ func TestIsTransportFlood(t *testing.T) {
 	}
 }
 
+func TestIsBotResponseTimeout(t *testing.T) {
+	if !isBotResponseTimeout(tgerr.New(400, "BOT_RESPONSE_TIMEOUT")) {
+		t.Fatal("expected BOT_RESPONSE_TIMEOUT to be detected")
+	}
+	if isBotResponseTimeout(tgerr.New(400, "MESSAGE_NOT_MODIFIED")) {
+		t.Fatal("did not expect unrelated rpc error to match")
+	}
+}
+
+func TestIsIgnorableClickButtonError(t *testing.T) {
+	if !isIgnorableClickButtonError(tgerr.New(400, "BOT_RESPONSE_TIMEOUT")) {
+		t.Fatal("expected BOT_RESPONSE_TIMEOUT to be ignored for click_button")
+	}
+	if isIgnorableClickButtonError(context.DeadlineExceeded) {
+		t.Fatal("did not expect context deadline to be ignored for click_button")
+	}
+	if isIgnorableClickButtonError(timeoutNetError{}) {
+		t.Fatal("did not expect net timeout to be ignored for click_button")
+	}
+	if isIgnorableClickButtonError(errors.New("rpcDoRequest: write tcp 1.2.3.4:443: i/o timeout")) {
+		t.Fatal("did not expect wrapped i/o timeout string to be ignored for click_button")
+	}
+	if isIgnorableClickButtonError(errors.New("boom")) {
+		t.Fatal("did not expect generic error to be ignored")
+	}
+}
+
+type timeoutNetError struct{}
+
+func (timeoutNetError) Error() string   { return "timeout" }
+func (timeoutNetError) Timeout() bool   { return true }
+func (timeoutNetError) Temporary() bool { return true }
+
+var _ net.Error = timeoutNetError{}
+
 func TestConfigurePacing(t *testing.T) {
 	s := &Session{}
 	s.ConfigurePacing(2*time.Second, 800*time.Millisecond, 45*time.Second)
@@ -178,6 +217,7 @@ func TestRPCTimeoutForOperation(t *testing.T) {
 		want      time.Duration
 	}{
 		{operation: "send_text", want: defaultRPCTimeout},
+		{operation: "click_button", want: defaultClickRPCTimeout},
 		{operation: "send_photo", want: defaultMediaRPCTimeout},
 		{operation: "send_audio", want: defaultMediaRPCTimeout},
 		{operation: "get_dialogs", want: defaultDialogRPCTimeout},
@@ -195,5 +235,33 @@ func TestSetFloodWaitRetry(t *testing.T) {
 	s.SetFloodWaitRetry(false)
 	if s.floodWaitRetryEnabled() {
 		t.Fatal("expected flood wait retry to be disabled")
+	}
+}
+
+func TestUnauthorizedRuntimeErrorMentionsExistingSessionFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "user.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err := unauthorizedRuntimeError(path)
+	if err == nil {
+		t.Fatal("expected unauthorized runtime error")
+	}
+	if !strings.Contains(err.Error(), "session file exists at "+path) {
+		t.Fatalf("error = %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "requires re-login") {
+		t.Fatalf("error = %q", err.Error())
+	}
+}
+
+func TestUnauthorizedRuntimeErrorWithoutSessionFile(t *testing.T) {
+	err := unauthorizedRuntimeError(filepath.Join(t.TempDir(), "missing.json"))
+	if err == nil {
+		t.Fatal("expected unauthorized runtime error")
+	}
+	if !strings.Contains(err.Error(), "no valid Telegram session is available") {
+		t.Fatalf("error = %q", err.Error())
 	}
 }

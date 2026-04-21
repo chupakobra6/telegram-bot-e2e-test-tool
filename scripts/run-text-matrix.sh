@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+CALLER_PWD="$(pwd -P)"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
@@ -17,6 +18,11 @@ if [[ -z "$CASES_FILE" ]]; then
   echo "CASES=/absolute/path/to/cases.txt is required" >&2
   exit 2
 fi
+
+case "$CASES_FILE" in
+  /*) ;;
+  *) CASES_FILE="$CALLER_PWD/$CASES_FILE" ;;
+esac
 
 if [[ ! -f "$CASES_FILE" ]]; then
   echo "cases file not found: $CASES_FILE" >&2
