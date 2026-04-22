@@ -236,7 +236,7 @@ func postControl(baseURL, path string) error {
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
