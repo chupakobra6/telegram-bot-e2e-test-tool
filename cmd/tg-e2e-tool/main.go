@@ -18,7 +18,6 @@ import (
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/protocol"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/ratesweep"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/runlock"
-	"github.com/igor/telegram-bot-e2e-test-tool/internal/scenario"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/transcript"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/triage"
 )
@@ -60,7 +59,8 @@ func main() {
 		printUsage(os.Stderr)
 		os.Exit(2)
 	}
-	if err := config.LoadDotEnv(".env"); err != nil {
+	repoRoot := detectRepoRoot()
+	if err := loadToolDotEnv(repoRoot); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -69,10 +69,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	cfg = cfg.WithRoot(repoRoot)
 	client := mtproto.New(cfg)
 	switch os.Args[1] {
 	case "help", "--help", "-h":
 		printUsage(os.Stdout)
+	case "fixtures":
+		if err := runFixturesCommand(repoRoot); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "print-config":
 		fmt.Printf("app_id=%d\nsession=%s\nruntime_lock=%s\ntranscripts=%s\nhistory_window=%d\nsync_interval=%s\naction_spacing=%s\nrpc_spacing=%s\npinned_cache_ttl=%s\n",
 			cfg.AppID,
@@ -115,36 +121,25 @@ func main() {
 			os.Exit(1)
 		}
 	case "run-scenario":
-		scenarioPaths := os.Args[2:]
-		if len(scenarioPaths) < 1 {
-			fmt.Fprintln(os.Stderr, "run-scenario requires at least one JSONL path")
-			os.Exit(2)
+		err = runScenarioCommand(cfg, client, os.Args[2:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
-		targetChat := strings.TrimSpace(os.Getenv("CHAT"))
-		err = withRuntimeLock(cfg, func() error {
-			return client.RunAuthorized(context.Background(), func(ctx context.Context, session *mtproto.Session) error {
-				artifacts := make([]scenarioArtifacts, 0, len(scenarioPaths))
-				for index, scenarioPath := range scenarioPaths {
-					tr := transcript.New()
-					runner := engine.New(session, tr, os.Stdout, cfg.HistoryWindow, cfg.SyncInterval)
-					prefix := scenarioPrefixForRun(scenarioPath, index, len(scenarioPaths))
-					if err := runCommandStream(ctx, runner, func(fn func(protocol.Command) error) error {
-						return scenario.ReadWithOptions(scenarioPath, scenario.ReadOptions{TargetChat: targetChat}, fn)
-					}); err != nil {
-						artifact, saveErr := saveScenarioArtifacts(cfg, tr, scenarioPath, prefix, os.Stderr)
-						if saveErr == nil {
-							artifacts = append(artifacts, artifact)
-							saveLastRunArtifacts(cfg, artifacts, os.Stderr)
-						}
-						return err
-					}
-					artifact, _ := saveScenarioArtifacts(cfg, tr, scenarioPath, prefix, os.Stderr)
-					artifacts = append(artifacts, artifact)
-				}
-				saveLastRunArtifacts(cfg, artifacts, os.Stderr)
-				return nil
-			})
-		})
+	case "run-block":
+		err = runBlockCommand(cfg, client, os.Args[2:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "run-text-matrix":
+		err = runTextMatrixCommand(cfg, client, os.Args[2:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "run-suite":
+		err = runSuiteCommand(cfg, client, repoRoot)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -171,8 +166,8 @@ func main() {
 }
 
 func printUsage(out *os.File) {
-	fmt.Fprintln(out, "usage: tg-e2e-tool <help|doctor|login|interactive|run-scenario|rate-sweep|print-config> [path ...]")
-	fmt.Fprintln(out, "the CLI auto-loads .env from the current working directory when present")
+	fmt.Fprintln(out, "usage: tg-e2e-tool <help|doctor|login|interactive|fixtures|run-scenario|run-block|run-text-matrix|run-suite|rate-sweep|print-config> [path ...]")
+	fmt.Fprintln(out, "the CLI auto-loads .env from the current working directory, with repo-root fallback")
 	fmt.Fprintln(out, "rate-sweep options: --chat @bot --runs 3 --artifact-root artifacts/rate-sweep --prepare-scenario path.jsonl --min-action-ms 1800 --max-action-ms 3000 --resolution-ms 100")
 }
 

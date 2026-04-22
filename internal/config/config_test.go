@@ -88,3 +88,19 @@ func TestLoadDotEnvRejectsMalformedLines(t *testing.T) {
 		t.Fatal("expected malformed .env error")
 	}
 }
+
+func TestWithRootResolvesRelativePaths(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		SessionPath:         ".sessions/user.json",
+		TranscriptOutputDir: "artifacts/transcripts",
+	}
+	resolved := cfg.WithRoot("/tmp/tool")
+	if got, want := resolved.SessionPath, "/tmp/tool/.sessions/user.json"; got != want {
+		t.Fatalf("SessionPath = %q, want %q", got, want)
+	}
+	if got, want := resolved.TranscriptOutputDir, "/tmp/tool/artifacts/transcripts"; got != want {
+		t.Fatalf("TranscriptOutputDir = %q, want %q", got, want)
+	}
+}

@@ -13,7 +13,7 @@ Fill in:
 - `TG_E2E_APP_HASH`
 - `TG_E2E_PHONE`
 
-The CLI auto-loads `.env` from the current working directory, so you do not need to `source .env` manually before `make ...` or `go run ...`.
+The CLI auto-loads `.env` from the current working directory and falls back to the tool repo root, so you do not need to `source .env` manually before `make ...` or `go run ...`.
 
 [`.env.example`](../.env.example) already contains example value formats, including:
 
@@ -72,22 +72,25 @@ make run-scenario SCENARIO=examples/suite/03-text-draft-confirm.jsonl CHAT=@your
 If you want a clean home dashboard before a targeted scenario, prepend the helper scenario instead of baking `/start` into every flow:
 
 ```bash
-CHAT=@your_bot_username ./scripts/run-scenario.sh \
+CHAT=@your_bot_username \
+go run ./cmd/tg-e2e-tool run-scenario \
   examples/helpers/00-home-ready.jsonl \
   examples/suite/03-text-draft-confirm.jsonl
 ```
 
-`scripts/run-scenario.sh` accepts absolute paths and paths relative to the directory you launched it from, so sibling product repos can call it without first `cd`-ing into the tool root.
+`tg-e2e-tool run-scenario` accepts absolute paths and paths relative to the directory you launched it from.
+If a sibling product repo calls it through `make -C`, prefer absolute paths like `$PWD/...` because `make -C` changes the working directory before the CLI starts.
 
 For stateful blocks with reset/template rendering, use the tool-owned runner instead of a product-local wrapper:
 
 ```bash
-CHAT=@your_bot_username CONTROL_URL=http://127.0.0.1:8081 ./scripts/run-block.sh \
+CHAT=@your_bot_username CONTROL_URL=http://127.0.0.1:8081 \
+go run ./cmd/tg-e2e-tool run-block \
   /absolute/path/to/00-home-ready.jsonl \
   /absolute/path/to/11-timed-digest-setup.jsonl.tmpl
 ```
 
-`scripts/run-block.sh` handles reset, `RUN_PREFIX`, `.jsonl.tmpl` rendering, optional `--clear-time`, and caller-relative path resolution. `CONTROL_URL` is the preferred control endpoint variable; `SHELFY_DEV_CONTROL_URL` remains a temporary compatibility alias.
+`tg-e2e-tool run-block` handles reset, `RUN_PREFIX`, `.jsonl.tmpl` rendering, and optional `--clear-time`. It resolves scenario paths from the CLI working directory, so sibling repos should pass absolute paths like `$PWD/...` when using `make -C`. `CONTROL_URL` is the preferred control endpoint variable; `SHELFY_DEV_CONTROL_URL` remains a temporary compatibility alias.
 
 After `run-scenario` completes, the tool refreshes:
 
@@ -122,7 +125,8 @@ make run-text-matrix \
   CASES=/absolute/path/to/date-cases.txt
 ```
 
-`CASES` may also be relative to the caller's working directory.
+`CASES` may also be relative to the directory where you launch `tg-e2e-tool run-text-matrix`.
+If you call it through `make -C` from another repo, prefer an absolute path like `$PWD/...`.
 
 Optional overrides:
 
@@ -197,6 +201,6 @@ If you run commands through `make`, `.env` is loaded automatically.
 
 ## Parallel-run safety
 
-`login`, `interactive`, `run-scenario`, and `rate-sweep` take a runtime lock next to the session file.
+`login`, `interactive`, `run-scenario`, `run-block`, `run-text-matrix`, and `rate-sweep` take a runtime lock next to the session file.
 
 This is intentional. One MTProto test account and one tested chat can only produce meaningful results when a single local process controls them at a time.

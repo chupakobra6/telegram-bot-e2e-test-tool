@@ -179,21 +179,6 @@ func (timeoutNetError) Temporary() bool { return true }
 
 var _ net.Error = timeoutNetError{}
 
-func TestConfigurePacing(t *testing.T) {
-	s := &Session{}
-	s.ConfigurePacing(2*time.Second, 800*time.Millisecond, 45*time.Second)
-
-	if s.actionSpacing != 2*time.Second {
-		t.Fatalf("actionSpacing = %s, want 2s", s.actionSpacing)
-	}
-	if s.rpcSpacing != 800*time.Millisecond {
-		t.Fatalf("rpcSpacing = %s, want 800ms", s.rpcSpacing)
-	}
-	if s.pinnedTTL != 45*time.Second {
-		t.Fatalf("pinnedTTL = %s, want 45s", s.pinnedTTL)
-	}
-}
-
 func TestNoteTransportFloodRecordsEvent(t *testing.T) {
 	s := &Session{}
 	s.noteTransportFlood("sync_history", errors.New("transport flood"))
@@ -227,14 +212,6 @@ func TestRPCTimeoutForOperation(t *testing.T) {
 		if got := rpcTimeoutForOperation(tt.operation); got != tt.want {
 			t.Fatalf("rpcTimeoutForOperation(%q) = %s, want %s", tt.operation, got, tt.want)
 		}
-	}
-}
-
-func TestSetFloodWaitRetry(t *testing.T) {
-	s := &Session{retryFloodWait: true}
-	s.SetFloodWaitRetry(false)
-	if s.floodWaitRetryEnabled() {
-		t.Fatal("expected flood wait retry to be disabled")
 	}
 }
 

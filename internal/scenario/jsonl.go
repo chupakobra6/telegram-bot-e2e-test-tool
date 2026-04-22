@@ -3,6 +3,7 @@ package scenario
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,8 +31,21 @@ func ReadWithOptions(path string, opts ReadOptions, fn func(protocol.Command) er
 	}
 	defer file.Close()
 
-	baseDir := filepath.Dir(path)
-	if err := protocol.ReadCommands(file, func(cmd protocol.Command) error {
+	if err := ReadReaderWithOptions(filepath.Dir(path), file, opts, fn); err != nil {
+		return fmt.Errorf("read scenario: %w", err)
+	}
+	return nil
+}
+
+func ReadBytesWithOptions(path string, body []byte, opts ReadOptions, fn func(protocol.Command) error) error {
+	if err := ReadReaderWithOptions(filepath.Dir(path), bytes.NewReader(body), opts, fn); err != nil {
+		return fmt.Errorf("read scenario: %w", err)
+	}
+	return nil
+}
+
+func ReadReaderWithOptions(baseDir string, r io.Reader, opts ReadOptions, fn func(protocol.Command) error) error {
+	return protocol.ReadCommands(r, func(cmd protocol.Command) error {
 		if cmd.Chat == DefaultChatPlaceholder {
 			if opts.TargetChat == "" {
 				return fmt.Errorf("scenario uses %s; provide CHAT=@your_bot_username for this run", DefaultChatPlaceholder)
@@ -51,10 +65,7 @@ func ReadWithOptions(path string, opts ReadOptions, fn func(protocol.Command) er
 			}
 		}
 		return fn(cmd)
-	}); err != nil {
-		return fmt.Errorf("read scenario: %w", err)
-	}
-	return nil
+	})
 }
 
 func UsesChatPlaceholder(path string) (bool, error) {

@@ -1,4 +1,4 @@
-package main
+package fixturegen
 
 import (
 	"image/png"
@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestRunWritesFixturePNG(t *testing.T) {
+func TestWritePNGWritesFixture(t *testing.T) {
 	t.Parallel()
 
 	for _, preset := range []string{"package", "receipt", "blank"} {
@@ -18,8 +18,8 @@ func TestRunWritesFixturePNG(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "fixture.png")
 
-			if err := run([]string{"--output", path, "--preset", preset}); err != nil {
-				t.Fatalf("run() error = %v", err)
+			if err := WritePNG(path, preset); err != nil {
+				t.Fatalf("WritePNG() error = %v", err)
 			}
 
 			file, err := os.Open(path)
@@ -39,12 +39,10 @@ func TestRunWritesFixturePNG(t *testing.T) {
 	}
 }
 
-func TestRunRejectsUnknownPreset(t *testing.T) {
+func TestBuildFixtureRejectsUnknownPreset(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "fixture.png")
-	if err := run([]string{"--output", path, "--preset", "nope"}); err == nil {
+	if _, err := BuildFixture("nope"); err == nil {
 		t.Fatal("expected error for unknown preset")
 	}
 }

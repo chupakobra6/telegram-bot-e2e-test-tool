@@ -1,7 +1,6 @@
 package ratesweep
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +8,6 @@ import (
 	"time"
 
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/mtproto"
-	"github.com/igor/telegram-bot-e2e-test-tool/internal/protocol"
 )
 
 func TestValidateScenarioInputsRequiresTargetChatForPlaceholder(t *testing.T) {
@@ -111,23 +109,5 @@ func TestSummarizeFloodOps(t *testing.T) {
 	got := summarizeFloodOps(events, mtproto.Stats{FloodWaits: 0, TransportFloods: 0}, mtproto.Stats{FloodWaits: 2, TransportFloods: 0})
 	if got != "click_button" {
 		t.Fatalf("summarizeFloodOps() = %q, want %q", got, "click_button")
-	}
-}
-
-func TestTraceCommand(t *testing.T) {
-	var buf bytes.Buffer
-	traceCommand(&buf, "start", protocol.Command{ID: "c1", Action: "send_text", Chat: "@bot"}, nil)
-	traceCommand(&buf, "error", protocol.Command{ID: "c2", Action: "wait"}, os.ErrDeadlineExceeded)
-	text := buf.String()
-	for _, part := range []string{
-		`COMMAND_START`,
-		`id="c1"`,
-		`action="send_text"`,
-		`COMMAND_ERROR`,
-		`error="i/o timeout"`,
-	} {
-		if !strings.Contains(text, part) {
-			t.Fatalf("trace output missing %q in %q", part, text)
-		}
 	}
 }

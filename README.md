@@ -25,6 +25,7 @@ It is designed for cases where Bot API-level tests are not enough and you want a
 - `send_photo`
 - `send_voice`
 - `send_audio`
+- `send_document`
 - `select_chat`
 - `click_button`
 - `wait`
@@ -69,7 +70,7 @@ make login
 make interactive
 ```
 
-The CLI auto-loads `.env` from the current working directory, so you do not need `source .env` or `set -a ...`.
+The CLI auto-loads `.env` from the current working directory and falls back to the tool repo root, so you do not need `source .env` or `set -a ...`.
 `make doctor` now also performs a live Telegram auth check when the app credentials and session file are present, so it can tell you whether the local session file is actually still authorized.
 
 If you want the full suite:
@@ -183,7 +184,7 @@ The compact artifacts are intentionally lossy: they normalize common dashboard/d
 
 For repository scenarios, the recommended first step is `select_chat`. This keeps the scenario format identical to interactive mode and avoids hidden target selection.
 
-Do not run multiple `login`, `interactive`, `run-scenario`, or `rate-sweep` processes in parallel with the same Telegram account. The tool now blocks this with a runtime lock because parallel runs can interleave messages, clicks, waits, and benchmark probes in one chat and make results meaningless.
+Do not run multiple `login`, `interactive`, `run-scenario`, `run-block`, `run-text-matrix`, or `rate-sweep` processes in parallel with the same Telegram account. The tool now blocks this with a runtime lock because parallel runs can interleave messages, clicks, waits, and benchmark probes in one chat and make results meaningless.
 
 Triage order after a run:
 
@@ -257,7 +258,8 @@ make run-scenario SCENARIO=examples/suite/03-text-draft-confirm.jsonl CHAT=@your
 If you want a fresh home dashboard before a targeted scenario, compose it with the helper fragment instead of copying `/start` into every test:
 
 ```bash
-CHAT=@your_bot_username ./scripts/run-scenario.sh \
+CHAT=@your_bot_username \
+go run ./cmd/tg-e2e-tool run-scenario \
   examples/helpers/00-home-ready.jsonl \
   examples/suite/03-text-draft-confirm.jsonl
 ```
@@ -265,27 +267,30 @@ CHAT=@your_bot_username ./scripts/run-scenario.sh \
 Or run several scenarios in one session:
 
 ```bash
-CHAT=@your_bot_username ./scripts/run-scenario.sh \
+CHAT=@your_bot_username \
+go run ./cmd/tg-e2e-tool run-scenario \
   examples/suite/01-start-pin-service.jsonl \
   examples/suite/02-dashboard-navigation-edit.jsonl
 ```
 
-`scripts/run-scenario.sh` accepts either absolute scenario paths or paths relative to the directory you invoked it from. This is important when another repo shells out to the tool from its own working tree.
+`tg-e2e-tool run-scenario` accepts either absolute scenario paths or paths relative to the directory you invoked it from.
+When another repo calls the tool through `make -C`, prefer absolute paths such as `$PWD/...`; `make -C` changes the working directory before the CLI starts.
 
 For stateful multi-scenario blocks, keep the orchestration here instead of re-implementing it in product repos:
 
 ```bash
-CHAT=@your_bot_username CONTROL_URL=http://127.0.0.1:8081 ./scripts/run-block.sh \
+CHAT=@your_bot_username CONTROL_URL=http://127.0.0.1:8081 \
+go run ./cmd/tg-e2e-tool run-block \
   /absolute/path/to/00-home-ready.jsonl \
   /absolute/path/to/11-timed-digest-setup.jsonl.tmpl
 ```
 
-`scripts/run-block.sh` owns:
+`tg-e2e-tool run-block` owns:
 
 - optional `POST /control/e2e/reset` before the block
 - `.jsonl.tmpl` rendering through `RUN_PREFIX`
 - optional `POST /control/time/clear` on exit via `--clear-time`
-- caller-relative scenario resolution
+- scenario resolution from the CLI working directory; for `make -C` from another repo, pass absolute paths
 
 Prefer `CONTROL_URL`. `SHELFY_DEV_CONTROL_URL` is still accepted as a temporary alias during the migration away from product-owned wrappers.
 
@@ -298,7 +303,8 @@ make run-text-matrix \
 ```
 
 This renders one temporary JSONL scenario per line and runs it through the same `run-scenario` path. The default cleanup button is `↩️ Отмена`; override it with `CANCEL_BUTTON_TEXT=...` if another bot uses a different transient-close button.
-`CASES` may also be relative to the directory you launched `scripts/run-text-matrix.sh` or `make run-text-matrix` from.
+`CASES` may also be relative to the directory you launched `tg-e2e-tool run-text-matrix` from.
+If you call it through `make -C` from another repo, prefer an absolute path like `$PWD/...`.
 
 Because v1 intentionally has no assert DSL, validation is done through:
 

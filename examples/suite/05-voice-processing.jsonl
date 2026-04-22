@@ -2,6 +2,6 @@
 # Covers send_voice and the first visible bot reaction in chat history.
 # Assumes the suite already established a fresh home dashboard.
 {"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
-{"id":"send_voice","action":"send_voice","path":"artifacts/fixtures/e2e-voice.ogg"}
+{"id":"send_voice","action":"send_voice","path":"@fixtures/e2e-voice.ogg"}
 {"id":"wait_voice_processing","action":"wait","timeout_ms":20000}
 {"id":"dump_voice_flow","action":"dump_state"}

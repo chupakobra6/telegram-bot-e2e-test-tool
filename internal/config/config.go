@@ -42,9 +42,9 @@ func Load() (Config, error) {
 	}
 	return Config{
 		AppID:               appID,
-		AppHash:             stringsOrEmpty(os.Getenv("TG_E2E_APP_HASH")),
-		Phone:               stringsOrEmpty(os.Getenv("TG_E2E_PHONE")),
-		Password:            stringsOrEmpty(os.Getenv("TG_E2E_PASSWORD")),
+		AppHash:             os.Getenv("TG_E2E_APP_HASH"),
+		Phone:               os.Getenv("TG_E2E_PHONE"),
+		Password:            os.Getenv("TG_E2E_PASSWORD"),
 		SessionPath:         defaultString(os.Getenv("TG_E2E_SESSION_PATH"), DefaultSessionPath),
 		TranscriptOutputDir: defaultString(os.Getenv("TG_E2E_TRANSCRIPT_DIR"), DefaultTranscriptOutputDir),
 		HistoryWindow:       DefaultHistoryWindow,
@@ -105,6 +105,15 @@ func (c Config) RuntimeLockPath() string {
 	return filepath.Join(dir, "runtime.lock")
 }
 
+func (c Config) WithRoot(root string) Config {
+	if root == "" {
+		return c
+	}
+	c.SessionPath = resolvePath(root, c.SessionPath)
+	c.TranscriptOutputDir = resolvePath(root, c.TranscriptOutputDir)
+	return c
+}
+
 func defaultString(v, fallback string) string {
 	if v == "" {
 		return fallback
@@ -124,6 +133,9 @@ func intFromEnv(key string, fallback int) (int, error) {
 	return n, nil
 }
 
-func stringsOrEmpty(v string) string {
-	return v
+func resolvePath(root, value string) string {
+	if value == "" || filepath.IsAbs(value) {
+		return value
+	}
+	return filepath.Join(root, value)
 }

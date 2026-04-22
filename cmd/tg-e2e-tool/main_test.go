@@ -18,15 +18,46 @@ import (
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/transcript"
 )
 
-func TestPathModeTreatsDefaultValueAsDefault(t *testing.T) {
-	if got := pathMode(".sessions/user.json", ".sessions/user.json"); got != "default(.sessions/user.json)" {
-		t.Fatalf("pathMode() = %q", got)
+func TestLoadToolDotEnvPrefersWorkingDirectoryAndFallsBackToRepoRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	cwd := t.TempDir()
+
+	repoEnv := "TG_E2E_TEST_REPO_ROOT_ONLY"
+	sharedEnv := "TG_E2E_TEST_SHARED_ENV"
+	cwdEnv := "TG_E2E_TEST_CWD_ONLY"
+	for _, key := range []string{repoEnv, sharedEnv, cwdEnv} {
+		_ = os.Unsetenv(key)
 	}
-	if got := pathMode("", ".sessions/user.json"); got != "default(.sessions/user.json)" {
-		t.Fatalf("pathMode() with empty value = %q", got)
+
+	if err := os.WriteFile(filepath.Join(repoRoot, ".env"), []byte(repoEnv+"=repo-only\n"+sharedEnv+"=repo\n"), 0o644); err != nil {
+		t.Fatalf("write repo .env: %v", err)
 	}
-	if got := pathMode("/tmp/custom.json", ".sessions/user.json"); got != "override" {
-		t.Fatalf("pathMode() with custom value = %q", got)
+	if err := os.WriteFile(filepath.Join(cwd, ".env"), []byte(cwdEnv+"=cwd-only\n"+sharedEnv+"=cwd\n"), 0o644); err != nil {
+		t.Fatalf("write cwd .env: %v", err)
+	}
+
+	previousWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(previousWD)
+	})
+
+	if err := loadToolDotEnv(repoRoot); err != nil {
+		t.Fatalf("loadToolDotEnv() error = %v", err)
+	}
+	if got := os.Getenv(cwdEnv); got != "cwd-only" {
+		t.Fatalf("%s = %q, want cwd-only", cwdEnv, got)
+	}
+	if got := os.Getenv(repoEnv); got != "repo-only" {
+		t.Fatalf("%s = %q, want repo-only", repoEnv, got)
+	}
+	if got := os.Getenv(sharedEnv); got != "cwd" {
+		t.Fatalf("%s = %q, want cwd", sharedEnv, got)
 	}
 }
 
