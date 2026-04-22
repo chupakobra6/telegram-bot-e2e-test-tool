@@ -191,6 +191,8 @@ By default, the tool uses:
 
 You usually do not need to override them in `.env`. `TG_E2E_SESSION_PATH` and `TG_E2E_TRANSCRIPT_DIR` are kept only for non-standard setups.
 
+`make clean` removes generated content under `artifacts/` and the default `.sessions/runtime.lock`, but keeps `.sessions/user.json`.
+
 ## Proxy support
 
 - `HTTP_PROXY` / `HTTPS_PROXY` work through `HTTP CONNECT`

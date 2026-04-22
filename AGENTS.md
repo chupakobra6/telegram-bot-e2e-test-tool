@@ -40,7 +40,8 @@
 - Run one scenario: `make run-scenario SCENARIO=examples/suite/03-text-draft-confirm.jsonl`
 - Generate local media fixtures: `make fixtures`
 - Run the full v1 suite: `make run-suite`
-- Clean local artifacts: `make clean`
+- Clean generated artifacts and the default runtime lock: `make clean`
+- `make clean` should keep the saved MTProto session at `.sessions/user.json`
 - Runtime-oriented `make` targets should load `.env` automatically; do not require users to `source .env` manually for normal local usage.
 
 ## Code change policy

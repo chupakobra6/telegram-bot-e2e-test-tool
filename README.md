@@ -209,6 +209,8 @@ make rate-sweep CHAT=@your_bot_username
 make clean
 ```
 
+`make clean` removes generated content under `artifacts/` and the default `.sessions/runtime.lock`, but keeps the saved MTProto session at `.sessions/user.json`.
+
 Direct CLI usage works the same way because `.env` is auto-loaded:
 
 ```bash
@@ -373,6 +375,8 @@ The tool already uses sensible defaults:
 - transcripts: `artifacts/transcripts`
 - runtime lock: `.sessions/runtime.lock`
 
+Use `make clean` to clear generated artifacts and the default runtime lock without deleting the saved session.
+
 ## Proxy support
 
 - `HTTP_PROXY` / `HTTPS_PROXY` are supported via `HTTP CONNECT`
@@ -418,7 +422,7 @@ The search range defaults to:
 
 Run sweeps sequentially only. They intentionally keep one live MTProto session and one Telegram account for the whole sweep; running two sweeps in parallel defeats the measurement and increases the chance of `FLOOD_WAIT`.
 
-The summary is written under `artifacts/rate-sweep/`.
+The summary is written under `artifacts/rate-sweep/`. `make clean` removes accumulated sweep outputs.
 
 ## Documentation
 

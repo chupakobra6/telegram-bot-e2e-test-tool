@@ -43,7 +43,7 @@ help:
 	@printf "  make fixtures       # generate local media fixtures\\n"
 	@printf "  make run-suite      # run the full v1 suite (CHAT=...)\\n"
 	@printf "  make rate-sweep     # binary-search safe action spacing (CHAT=..., PREPARE_SCENARIO=...)\\n"
-	@printf "  make clean          # remove local transcripts and fixtures\\n"
+	@printf "  make clean          # remove generated local artifacts and default runtime lock\\n"
 
 setup:
 	go mod tidy
@@ -85,4 +85,5 @@ print-config:
 	$(CLI) print-config
 
 clean:
-	rm -rf artifacts/transcripts artifacts/fixtures
+	rm -rf artifacts/transcripts artifacts/fixtures artifacts/rate-sweep
+	rm -f .sessions/runtime.lock
