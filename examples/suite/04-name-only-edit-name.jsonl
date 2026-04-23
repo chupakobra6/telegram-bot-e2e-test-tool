@@ -1,0 +1,10 @@
+# Covers incomplete draft creation and name editing flow.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"send_name_only","action":"send_text","text":"молоко"}
+{"id":"wait_name_only_draft","action":"wait","timeout_ms":30000}
+{"id":"edit_name","action":"click_button","button_text":"📝 Название"}
+{"id":"wait_name_prompt","action":"wait","timeout_ms":30000}
+{"id":"send_updated_name","action":"send_text","text":"молоко ультрапастеризованное"}
+{"id":"wait_name_updated","action":"wait","timeout_ms":30000}
+{"id":"dump_name_edit","action":"dump_state"}
+{"id":"cancel_draft","action":"click_button","button_text":"↩️ Отмена"}

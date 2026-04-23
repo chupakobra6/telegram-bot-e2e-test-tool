@@ -1,0 +1,8 @@
+# Requires fixtures from `make fixtures`.
+# Covers voice upload, draft creation from speech, and cleanup back to home.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"send_voice","action":"send_voice","path":"@fixtures/e2e-voice.ogg"}
+{"id":"wait_voice_processing","action":"wait","timeout_ms":30000}
+{"id":"wait_voice_result","action":"wait","timeout_ms":45000}
+{"id":"dump_voice_result","action":"dump_state"}
+{"id":"cancel_voice_draft","action":"click_button","button_text":"↩️ Отмена"}

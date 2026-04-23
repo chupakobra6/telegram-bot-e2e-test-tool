@@ -1,0 +1,3 @@
+# Observes the chat after control API triggered the morning digest.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"dump_after_digest","action":"dump_state"}

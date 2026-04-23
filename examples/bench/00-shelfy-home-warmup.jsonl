@@ -1,5 +1,4 @@
-# Shelfy prepare hook: restore a fresh pinned home dashboard before a benchmark probe.
+# Shelfy prepare hook: force `/dashboard` and capture the current home state before a benchmark probe.
 {"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
-{"id":"start_reset","action":"send_text","text":"/start"}
-{"id":"wait_reset","action":"wait","timeout_ms":12000}
+{"id":"dashboard_reset","action":"send_text","text":"/dashboard"}
 {"id":"dump_home","action":"dump_state"}

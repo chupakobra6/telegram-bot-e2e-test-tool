@@ -87,7 +87,13 @@ func commandScenarioSource(path, prefix string, commands []protocol.Command) sce
 }
 
 func runScenarioSources(ctx context.Context, cfg config.Config, session *mtproto.Session, sources []scenarioSource, stdout, stderr *os.File) error {
-	artifacts := make([]scenarioArtifacts, 0, len(sources))
+	artifacts, err := runScenarioSourcesWithArtifacts(ctx, cfg, session, sources, stdout, stderr, nil)
+	saveLastRunArtifacts(cfg, artifacts, stderr)
+	return err
+}
+
+func runScenarioSourcesWithArtifacts(ctx context.Context, cfg config.Config, session *mtproto.Session, sources []scenarioSource, stdout, stderr *os.File, existing []scenarioArtifacts) ([]scenarioArtifacts, error) {
+	artifacts := append([]scenarioArtifacts(nil), existing...)
 	for index, source := range sources {
 		tr := transcript.New()
 		runner := engine.New(session, tr, stdout, cfg.HistoryWindow, cfg.SyncInterval)
@@ -102,15 +108,15 @@ func runScenarioSources(ctx context.Context, cfg config.Config, session *mtproto
 			artifact, saveErr := saveScenarioArtifacts(cfg, tr, source.ScenarioPath, prefix, stderr)
 			if saveErr == nil {
 				artifacts = append(artifacts, artifact)
-				saveLastRunArtifacts(cfg, artifacts, stderr)
 			}
-			return err
+			return artifacts, err
 		}
-		artifact, _ := saveScenarioArtifacts(cfg, tr, source.ScenarioPath, prefix, stderr)
-		artifacts = append(artifacts, artifact)
+		artifact, saveErr := saveScenarioArtifacts(cfg, tr, source.ScenarioPath, prefix, stderr)
+		if saveErr == nil {
+			artifacts = append(artifacts, artifact)
+		}
 	}
-	saveLastRunArtifacts(cfg, artifacts, stderr)
-	return nil
+	return artifacts, nil
 }
 
 func builtInRepoPath(repoRoot, relativePath string) string {

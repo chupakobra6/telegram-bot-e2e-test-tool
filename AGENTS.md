@@ -37,7 +37,7 @@
 - Print compact config: `make print-config`
 - Create MTProto session: `make login`
 - Run interactive mode: `make interactive`
-- Run one scenario: `make run-scenario SCENARIO=examples/suite/03-text-draft-confirm.jsonl`
+- Run one scenario: `make run-scenario SCENARIO=examples/suite/03-text-fast-path-complete.jsonl`
 - Generate local media fixtures: `make fixtures`
 - Run the full v1 suite: `make run-suite`
 - Clean generated artifacts and the default runtime lock: `make clean`
@@ -50,6 +50,7 @@
 - Do not introduce new dependencies without a clear benefit.
 - Update tests for changed behavior.
 - Update docs and example scenarios when the public protocol, CLI, setup, or runtime behavior changes.
+- When Shelfy bot UI copy, button labels/order, dashboard flows, or control-backed behavior changes, refresh `examples/suite/*.jsonl`, docs, and help-facing surfaces in the same pass instead of leaving stale scenarios alongside current ones.
 
 ## Verification
 - Run the narrowest relevant validation first.
@@ -61,6 +62,7 @@
 - If live Telegram behavior changes and the local environment is available, prefer validating with:
   - one focused `make run-scenario ...`, or
   - `make run-suite` for broader end-to-end coverage
+- After Shelfy product/UI/control changes that affect the bundled suite, prefer one full current-head live `make run-suite` over a set of targeted greens before claiming the tool is synchronized again.
 - Do not claim success without checking command output.
 
 ## Safety

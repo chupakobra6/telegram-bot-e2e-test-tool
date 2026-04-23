@@ -1,0 +1,32 @@
+# Covers dashboard navigation plus settings actions.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"dashboard_home","action":"send_text","text":"/dashboard"}
+{"id":"open_settings","action":"click_button","button_text":"⚙️ Настройки"}
+{"id":"wait_settings","action":"wait","timeout_ms":60000}
+{"id":"digest_earlier","action":"click_button","button_text":"🕘 На час раньше"}
+{"id":"wait_digest_earlier","action":"wait","timeout_ms":60000}
+{"id":"digest_later","action":"click_button","button_text":"🕙 На час позже"}
+{"id":"wait_digest_later","action":"wait","timeout_ms":60000}
+{"id":"timezone_utc","action":"click_button","button_text":"🌍 UTC"}
+{"id":"wait_timezone_utc","action":"wait","timeout_ms":60000}
+{"id":"timezone_new_york","action":"click_button","button_text":"🇺🇸 Нью-Йорк"}
+{"id":"wait_timezone_new_york","action":"wait","timeout_ms":60000}
+{"id":"timezone_berlin","action":"click_button","button_text":"🇩🇪 Берлин"}
+{"id":"wait_timezone_berlin","action":"wait","timeout_ms":60000}
+{"id":"timezone_moscow","action":"click_button","button_text":"🇷🇺 Москва"}
+{"id":"wait_timezone_moscow","action":"wait","timeout_ms":60000}
+{"id":"back_home_from_settings","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home_from_settings","action":"wait","timeout_ms":60000}
+{"id":"open_list","action":"click_button","button_text":"📋 Список"}
+{"id":"wait_list","action":"wait","timeout_ms":60000}
+{"id":"back_home_from_list","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home_from_list","action":"wait","timeout_ms":60000}
+{"id":"open_soon","action":"click_button","button_text":"⏰ Скоро"}
+{"id":"wait_soon","action":"wait","timeout_ms":60000}
+{"id":"back_home_from_soon","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home_from_soon","action":"wait","timeout_ms":60000}
+{"id":"open_stats","action":"click_button","button_text":"📊 Статистика"}
+{"id":"wait_stats","action":"wait","timeout_ms":60000}
+{"id":"back_home_from_stats","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home_from_stats","action":"wait","timeout_ms":60000}
+{"id":"dump_dashboard_navigation","action":"dump_state"}

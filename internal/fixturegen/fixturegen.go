@@ -51,7 +51,7 @@ func BuildFixture(preset string) (*image.RGBA, error) {
 		return buildTextFixture([]string{
 			"сметана",
 			"завтра",
-		}, false), nil
+		}, false)
 	case "receipt":
 		return buildTextFixture([]string{
 			"КАССОВЫЙ ЧЕК",
@@ -59,7 +59,7 @@ func BuildFixture(preset string) (*image.RGBA, error) {
 			"кефир",
 			"годен до 22.04.2026",
 			"итог 120.00",
-		}, true), nil
+		}, true)
 	case "blank":
 		return buildBlankFixture(), nil
 	default:
@@ -83,7 +83,7 @@ func buildBlankFixture() *image.RGBA {
 	return img
 }
 
-func buildTextFixture(lines []string, receipt bool) *image.RGBA {
+func buildTextFixture(lines []string, receipt bool) (*image.RGBA, error) {
 	const width = 1280
 	const height = 720
 
@@ -100,7 +100,7 @@ func buildTextFixture(lines []string, receipt bool) *image.RGBA {
 
 	ttf, err := opentype.Parse(goregular.TTF)
 	if err != nil {
-		panic(fmt.Sprintf("parse embedded font: %v", err))
+		return nil, fmt.Errorf("parse embedded font: %w", err)
 	}
 	size := 64.0
 	if receipt {
@@ -112,7 +112,7 @@ func buildTextFixture(lines []string, receipt bool) *image.RGBA {
 		Hinting: font.HintingFull,
 	})
 	if err != nil {
-		panic(fmt.Sprintf("create embedded font face: %v", err))
+		return nil, fmt.Errorf("create embedded font face: %w", err)
 	}
 	defer face.Close()
 
@@ -135,7 +135,7 @@ func buildTextFixture(lines []string, receipt bool) *image.RGBA {
 		d.Dot.X = fixed.I(cardRect.Min.X + 60)
 		d.Dot.Y += fixed.I(lineAdvance)
 	}
-	return img
+	return img, nil
 }
 
 func drawRect(img *image.RGBA, rect image.Rectangle, fill color.RGBA) {

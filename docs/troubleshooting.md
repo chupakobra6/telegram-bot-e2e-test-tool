@@ -28,7 +28,7 @@ Send `select_chat` first or pass `chat` explicitly on the command that needs it.
 
 ## `another tg-e2e-tool runtime is already active for this session`
 
-Another local `login`, `interactive`, `run-scenario`, or `rate-sweep` process is already holding the runtime lock for this MTProto session.
+Another local `login`, `interactive`, `run-scenario`, `run-block`, `run-text-matrix`, or `rate-sweep` process is already holding the runtime lock for this MTProto session.
 
 This is expected protection, not a random failure. Do not run live Telegram scenarios in parallel with the same test account.
 
@@ -55,6 +55,35 @@ This usually means one of three things:
 - the bot did not respond
 - the timeout is too small
 - the expected change did not appear inside the visible history window
+
+## `required fixture missing`
+
+The built-in suite now expects the bundled local fixtures to exist:
+
+- photo
+- document
+- voice
+- audio
+
+Run:
+
+```bash
+make fixtures
+```
+
+Then retry the scenario or suite.
+
+## `run-suite requires reachable Shelfy control API`
+
+The full built-in Shelfy suite now includes timed digest and reset-driven flows.
+
+Check that your local Shelfy dev stack is running and that the non-production control API is reachable:
+
+```bash
+curl -X POST http://127.0.0.1:8081/control/time/clear
+```
+
+If you use a different endpoint, set `CONTROL_URL`.
 
 ## `FLOOD_WAIT`
 

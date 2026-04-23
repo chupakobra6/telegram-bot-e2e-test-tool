@@ -1,0 +1,17 @@
+# Covers saving a product, opening it from the dashboard, closing it, and checking list/stats views.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"send_product","action":"send_text","text":"сметана завтра"}
+{"id":"wait_draft","action":"wait","timeout_ms":30000}
+{"id":"confirm_draft","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_saved","action":"wait","timeout_ms":30000}
+{"id":"open_list","action":"click_button","button_text":"📋 Список"}
+{"id":"wait_list","action":"wait","timeout_ms":30000}
+{"id":"open_product","action":"click_button","button_text":"👀 сметана"}
+{"id":"wait_product_card","action":"wait","timeout_ms":30000}
+{"id":"mark_consumed","action":"click_button","button_text":"✅ Съедено"}
+{"id":"wait_list_after_close","action":"wait","timeout_ms":30000}
+{"id":"back_home_after_list","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home_after_list","action":"wait","timeout_ms":30000}
+{"id":"open_stats","action":"click_button","button_text":"📊 Статистика"}
+{"id":"wait_stats","action":"wait","timeout_ms":30000}
+{"id":"dump_product_close","action":"dump_state"}

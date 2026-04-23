@@ -1,0 +1,69 @@
+# Deterministic pagination block: creates 10 soon/active products with stable product names,
+# verifies soon paging, then verifies list paging, back-to-origin product navigation,
+# and clamp-to-last-page after removals.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"send_01","action":"send_text","text":"кефир завтра"}
+{"id":"wait_01_draft","action":"wait","timeout_ms":30000}
+{"id":"save_01","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_01_saved","action":"wait","timeout_ms":30000}
+{"id":"send_02","action":"send_text","text":"молоко завтра"}
+{"id":"wait_02_draft","action":"wait","timeout_ms":30000}
+{"id":"save_02","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_02_saved","action":"wait","timeout_ms":30000}
+{"id":"send_03","action":"send_text","text":"сыр завтра"}
+{"id":"wait_03_draft","action":"wait","timeout_ms":30000}
+{"id":"save_03","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_03_saved","action":"wait","timeout_ms":30000}
+{"id":"send_04","action":"send_text","text":"сметана завтра"}
+{"id":"wait_04_draft","action":"wait","timeout_ms":30000}
+{"id":"save_04","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_04_saved","action":"wait","timeout_ms":30000}
+{"id":"send_05","action":"send_text","text":"йогурт завтра"}
+{"id":"wait_05_draft","action":"wait","timeout_ms":30000}
+{"id":"save_05","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_05_saved","action":"wait","timeout_ms":30000}
+{"id":"send_06","action":"send_text","text":"творог завтра"}
+{"id":"wait_06_draft","action":"wait","timeout_ms":30000}
+{"id":"save_06","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_06_saved","action":"wait","timeout_ms":30000}
+{"id":"send_07","action":"send_text","text":"масло завтра"}
+{"id":"wait_07_draft","action":"wait","timeout_ms":30000}
+{"id":"save_07","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_07_saved","action":"wait","timeout_ms":30000}
+{"id":"send_08","action":"send_text","text":"хлеб завтра"}
+{"id":"wait_08_draft","action":"wait","timeout_ms":30000}
+{"id":"save_08","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_08_saved","action":"wait","timeout_ms":30000}
+{"id":"send_09","action":"send_text","text":"чай завтра"}
+{"id":"wait_09_draft","action":"wait","timeout_ms":30000}
+{"id":"save_09","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_09_saved","action":"wait","timeout_ms":30000}
+{"id":"send_10","action":"send_text","text":"сок завтра"}
+{"id":"wait_10_draft","action":"wait","timeout_ms":30000}
+{"id":"save_10","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_10_saved","action":"wait","timeout_ms":30000}
+{"id":"open_soon","action":"click_button","button_text":"⏰ Скоро"}
+{"id":"wait_soon_page_1","action":"wait","timeout_ms":30000}
+{"id":"soon_next","action":"click_button","button_text":"След. ➡️"}
+{"id":"wait_soon_page_2","action":"wait","timeout_ms":30000}
+{"id":"soon_prev","action":"click_button","button_text":"⬅️ Пред."}
+{"id":"wait_soon_page_1_again","action":"wait","timeout_ms":30000}
+{"id":"back_home_from_soon","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home_from_soon","action":"wait","timeout_ms":30000}
+{"id":"open_list","action":"click_button","button_text":"📋 Список"}
+{"id":"wait_list_page_1","action":"wait","timeout_ms":30000}
+{"id":"list_next","action":"click_button","button_text":"След. ➡️"}
+{"id":"wait_list_page_2","action":"wait","timeout_ms":30000}
+{"id":"open_product_from_page_2","action":"click_button","button_text":"👀 кефир"}
+{"id":"wait_product_page_2","action":"wait","timeout_ms":30000}
+{"id":"back_to_page_2","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_back_to_page_2","action":"wait","timeout_ms":30000}
+{"id":"open_product_01_again","action":"click_button","button_text":"👀 кефир"}
+{"id":"wait_product_01_again","action":"wait","timeout_ms":30000}
+{"id":"consume_product_01","action":"click_button","button_text":"✅ Съедено"}
+{"id":"wait_page_2_after_first_consume","action":"wait","timeout_ms":30000}
+{"id":"open_product_02","action":"click_button","button_text":"👀 молоко"}
+{"id":"wait_product_02","action":"wait","timeout_ms":30000}
+{"id":"consume_product_02","action":"click_button","button_text":"✅ Съедено"}
+{"id":"wait_clamped_page_1","action":"wait","timeout_ms":30000}
+{"id":"dump_pagination","action":"dump_state"}

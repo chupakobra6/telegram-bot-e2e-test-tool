@@ -1,9 +1,8 @@
-# Replace @your_bot_username with the bot you are testing.
+# Minimal Shelfy smoke: home bootstrap, fast text draft, confirm, final dump.
 {"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
-{"id":"start","action":"send_text","text":"/start"}
-{"id":"wait-dashboard","action":"wait","timeout_ms":5000}
-{"id":"send-product","action":"send_text","text":"молоко до пятницы"}
-{"id":"wait-draft","action":"wait","timeout_ms":5000}
+{"id":"dashboard_home","action":"send_text","text":"/dashboard"}
+{"id":"send-product","action":"send_text","text":"зефир завтра"}
+{"id":"wait-draft","action":"wait","timeout_ms":30000}
 {"id":"confirm","action":"click_button","button_text":"✅ Сохранить"}
-{"id":"wait-save","action":"wait","timeout_ms":5000}
+{"id":"wait-save","action":"wait","timeout_ms":30000}
 {"id":"dump-final","action":"dump_state"}

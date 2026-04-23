@@ -1,5 +1,4 @@
-# Helper scenario: select a target chat and establish a fresh pinned home dashboard.
+# Helper scenario: select a target chat, force `/dashboard`, and capture the current home state.
 {"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
-{"id":"start_reset","action":"send_text","text":"/start"}
-{"id":"wait_reset","action":"wait","timeout_ms":12000}
+{"id":"dashboard_reset","action":"send_text","text":"/dashboard"}
 {"id":"dump_home_ready","action":"dump_state"}

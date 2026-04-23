@@ -1,7 +1,0 @@
-# Covers explicit @username targeting, send_text, wait, dump_state,
-# pinned summary and service messages for pin events.
-# This scenario intentionally seeds the home dashboard for the later suite fragments.
-{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
-{"id":"start_explicit","action":"send_text","text":"/start"}
-{"id":"wait_dashboard","action":"wait","timeout_ms":12000}
-{"id":"dump_after_start","action":"dump_state"}

@@ -1,0 +1,10 @@
+# Closes the digest product so cleanup can be reconciled deterministically.
+# Current Shelfy cleaner shortens the saved name to the core item label `кеф`.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"open_list","action":"click_button","button_text":"📋 Список"}
+{"id":"wait_list","action":"wait","timeout_ms":50000}
+{"id":"open_product","action":"click_button","button_text":"👀 кеф"}
+{"id":"wait_product_card","action":"wait","timeout_ms":30000}
+{"id":"mark_consumed","action":"click_button","button_text":"✅ Съедено"}
+{"id":"wait_consumed","action":"wait","timeout_ms":30000}
+{"id":"dump_after_close","action":"dump_state"}

@@ -55,32 +55,34 @@ type scenarioArtifacts struct {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		printUsage(os.Stderr)
-		os.Exit(2)
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdin, stdout, stderr *os.File) int {
+	if len(args) == 0 {
+		printUsage(stderr)
+		return 2
 	}
 	repoRoot := detectRepoRoot()
 	if err := loadToolDotEnv(repoRoot); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return printError(stderr, 1, err)
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return printError(stderr, 1, err)
 	}
 	cfg = cfg.WithRoot(repoRoot)
 	client := mtproto.New(cfg)
-	switch os.Args[1] {
+	switch args[0] {
 	case "help", "--help", "-h":
-		printUsage(os.Stdout)
+		printUsage(stdout)
+		return 0
 	case "fixtures":
 		if err := runFixturesCommand(repoRoot); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			return printError(stderr, 1, err)
 		}
 	case "print-config":
-		fmt.Printf("app_id=%d\nsession=%s\nruntime_lock=%s\ntranscripts=%s\nhistory_window=%d\nsync_interval=%s\naction_spacing=%s\nrpc_spacing=%s\npinned_cache_ttl=%s\n",
+		fmt.Fprintf(stdout, "app_id=%d\nsession=%s\nruntime_lock=%s\ntranscripts=%s\nhistory_window=%d\nsync_interval=%s\naction_spacing=%s\nrpc_spacing=%s\npinned_cache_ttl=%s\n",
 			cfg.AppID,
 			cfg.SessionPath,
 			cfg.RuntimeLockPath(),
@@ -91,84 +93,84 @@ func main() {
 			cfg.RPCSpacing,
 			cfg.PinnedCacheTTL,
 		)
+		return 0
 	case "doctor":
-		printDoctor(cfg, os.Stdout, func(ctx context.Context) (mtproto.AuthStatus, error) {
+		printDoctor(cfg, stdout, func(ctx context.Context) (mtproto.AuthStatus, error) {
 			return client.AuthStatus(ctx)
 		})
+		return 0
 	case "login":
 		if err := withRuntimeLock(cfg, func() error {
-			return client.Login(context.Background(), os.Stdin, os.Stdout)
+			return client.Login(context.Background(), stdin, stdout)
 		}); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			return printError(stderr, 1, err)
 		}
 	case "interactive":
 		tr := transcript.New()
 		err := withRuntimeLock(cfg, func() error {
 			return client.RunAuthorized(context.Background(), func(ctx context.Context, session *mtproto.Session) error {
-				if err := emitInteractiveReady(tr, os.Stdout, cfg); err != nil {
+				if err := emitInteractiveReady(tr, stdout, cfg); err != nil {
 					return err
 				}
-				runner := engine.New(session, tr, os.Stdout, cfg.HistoryWindow, cfg.SyncInterval)
+				runner := engine.New(session, tr, stdout, cfg.HistoryWindow, cfg.SyncInterval)
 				return runCommandStream(ctx, runner, func(fn func(protocol.Command) error) error {
-					return protocol.ReadCommands(os.Stdin, fn)
+					return protocol.ReadCommands(stdin, fn)
 				})
 			})
 		})
-		saveTranscript(cfg, tr, "interactive", os.Stderr)
+		saveTranscript(cfg, tr, "interactive", stderr)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			return printError(stderr, 1, err)
 		}
 	case "run-scenario":
-		err = runScenarioCommand(cfg, client, os.Args[2:])
+		err = runScenarioCommand(cfg, client, args[1:])
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			return printError(stderr, 1, err)
 		}
 	case "run-block":
-		err = runBlockCommand(cfg, client, os.Args[2:])
+		err = runBlockCommand(cfg, client, args[1:])
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			return printError(stderr, 1, err)
 		}
 	case "run-text-matrix":
-		err = runTextMatrixCommand(cfg, client, os.Args[2:])
+		err = runTextMatrixCommand(cfg, client, args[1:])
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			return printError(stderr, 1, err)
 		}
 	case "run-suite":
 		err = runSuiteCommand(cfg, client, repoRoot)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			return printError(stderr, 1, err)
 		}
 	case "rate-sweep":
-		opts, scenarioPaths, parseErr := parseRateSweepArgs(os.Args[2:])
+		opts, scenarioPaths, parseErr := parseRateSweepArgs(args[1:])
 		if parseErr != nil {
-			fmt.Fprintln(os.Stderr, parseErr)
-			os.Exit(2)
+			return printError(stderr, 2, parseErr)
 		}
 		opts.ScenarioPaths = scenarioPaths
 		err = withRuntimeLock(cfg, func() error {
-			return ratesweep.Run(context.Background(), cfg, os.Stdout, opts)
+			return ratesweep.Run(context.Background(), cfg, stdout, opts)
 		})
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			return printError(stderr, 1, err)
 		}
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
-		printUsage(os.Stderr)
-		os.Exit(2)
+		fmt.Fprintf(stderr, "unknown command: %s\n\n", args[0])
+		printUsage(stderr)
+		return 2
 	}
+	return 0
 }
 
-func printUsage(out *os.File) {
+func printUsage(out io.Writer) {
 	fmt.Fprintln(out, "usage: tg-e2e-tool <help|doctor|login|interactive|fixtures|run-scenario|run-block|run-text-matrix|run-suite|rate-sweep|print-config> [path ...]")
 	fmt.Fprintln(out, "the CLI auto-loads .env from the current working directory, with repo-root fallback")
 	fmt.Fprintln(out, "rate-sweep options: --chat @bot --runs 3 --artifact-root artifacts/rate-sweep --prepare-scenario path.jsonl --min-action-ms 1800 --max-action-ms 3000 --resolution-ms 100")
+}
+
+func printError(stderr io.Writer, code int, err error) int {
+	fmt.Fprintln(stderr, err)
+	return code
 }
 
 type authStatusChecker func(context.Context) (mtproto.AuthStatus, error)
@@ -226,7 +228,7 @@ func doctorAuthStatus(cfg config.Config, sessionExists bool, check authStatusChe
 	return "reauth_required", fmt.Sprintf("session file exists at %s, but Telegram requires re-login; run `tg-e2e-tool login` again", cfg.SessionPath)
 }
 
-func emitInteractiveReady(tr *transcript.Transcript, out *os.File, cfg config.Config) error {
+func emitInteractiveReady(tr *transcript.Transcript, out io.Writer, cfg config.Config) error {
 	evt := protocol.Event{
 		Type:    "info",
 		OK:      true,
@@ -253,7 +255,7 @@ func withRuntimeLock(cfg config.Config, run func() error) error {
 	return run()
 }
 
-func saveTranscript(cfg config.Config, tr *transcript.Transcript, prefix string, stderr *os.File) (runScenarioArtifact, error) {
+func saveTranscript(cfg config.Config, tr *transcript.Transcript, prefix string, stderr io.Writer) (runScenarioArtifact, error) {
 	jsonPath := filepath.Join(cfg.TranscriptOutputDir, prefix+".json")
 	textPath := filepath.Join(cfg.TranscriptOutputDir, prefix+".txt")
 	if err := tr.SaveJSON(jsonPath); err != nil {
@@ -279,7 +281,7 @@ func saveTranscript(cfg config.Config, tr *transcript.Transcript, prefix string,
 	}, nil
 }
 
-func saveScenarioArtifacts(cfg config.Config, tr *transcript.Transcript, scenarioPath, prefix string, stderr *os.File) (scenarioArtifacts, error) {
+func saveScenarioArtifacts(cfg config.Config, tr *transcript.Transcript, scenarioPath, prefix string, stderr io.Writer) (scenarioArtifacts, error) {
 	artifact, err := saveTranscript(cfg, tr, prefix, stderr)
 	if err != nil {
 		return scenarioArtifacts{}, err
@@ -323,7 +325,7 @@ func saveScenarioArtifacts(cfg config.Config, tr *transcript.Transcript, scenari
 	}, nil
 }
 
-func saveLastRunArtifacts(cfg config.Config, entries []scenarioArtifacts, stderr *os.File) {
+func saveLastRunArtifacts(cfg config.Config, entries []scenarioArtifacts, stderr io.Writer) {
 	summaryRows := make([]triage.SummaryRow, 0, len(entries))
 	artifactRows := make([]runScenarioArtifact, 0, len(entries))
 	transcripts := make(map[string]*transcript.Transcript, len(entries))

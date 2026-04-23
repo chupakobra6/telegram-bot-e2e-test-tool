@@ -1,8 +1,0 @@
-# Requires fixtures from `make fixtures`.
-# Covers send_photo, wait for immediate processing feedback, and wait for the later draft update.
-# Assumes the suite already established a fresh home dashboard.
-{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
-{"id":"send_photo","action":"send_photo","path":"@fixtures/e2e-photo.png"}
-{"id":"wait_photo_processing","action":"wait","timeout_ms":12000}
-{"id":"wait_photo_draft","action":"wait","timeout_ms":25000}
-{"id":"dump_photo_flow","action":"dump_state"}

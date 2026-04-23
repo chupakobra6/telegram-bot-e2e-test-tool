@@ -1,0 +1,22 @@
+# Covers discarded and deleted product actions from the product card plus stats refresh.
+# In the full built-in suite the delete path reuses the earlier saved `зефир` from scenario 03.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"send_product_discarded","action":"send_text","text":"кефир завтра"}
+{"id":"wait_draft_discarded","action":"wait","timeout_ms":30000}
+{"id":"confirm_discarded_draft","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_saved_discarded","action":"wait","timeout_ms":30000}
+{"id":"open_list","action":"click_button","button_text":"📋 Список"}
+{"id":"wait_list","action":"wait","timeout_ms":30000}
+{"id":"open_discarded_product","action":"click_button","button_text":"👀 кефир"}
+{"id":"wait_discarded_product_card","action":"wait","timeout_ms":30000}
+{"id":"mark_discarded","action":"click_button","button_text":"🗑️ Выброшено"}
+{"id":"wait_list_after_discarded","action":"wait","timeout_ms":30000}
+{"id":"open_deleted_product","action":"click_button","button_text":"👀 зефир"}
+{"id":"wait_deleted_product_card","action":"wait","timeout_ms":30000}
+{"id":"mark_deleted","action":"click_button","button_text":"❌ Удалить"}
+{"id":"wait_list_after_deleted","action":"wait","timeout_ms":30000}
+{"id":"back_home_after_list","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home_after_list","action":"wait","timeout_ms":30000}
+{"id":"open_stats","action":"click_button","button_text":"📊 Статистика"}
+{"id":"wait_stats","action":"wait","timeout_ms":30000}
+{"id":"dump_product_discarded_deleted","action":"dump_state"}

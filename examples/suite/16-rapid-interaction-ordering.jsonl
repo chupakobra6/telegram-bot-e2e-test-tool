@@ -1,0 +1,12 @@
+# Covers ordering-sensitive same-user interactions without extra settle time between steps.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"open_settings","action":"click_button","button_text":"⚙️ Настройки"}
+{"id":"back_home","action":"click_button","button_text":"⬅️ Назад"}
+{"id":"wait_home_again","action":"wait","timeout_ms":60000}
+{"id":"send_name_only","action":"send_text","text":"кефир"}
+{"id":"wait_draft","action":"wait","timeout_ms":60000}
+{"id":"edit_date","action":"click_button","button_text":"📅 Срок"}
+{"id":"send_date_immediately","action":"send_text","text":"завтра"}
+{"id":"wait_date_applied","action":"wait","timeout_ms":60000}
+{"id":"cancel_draft","action":"click_button","button_text":"↩️ Отмена"}
+{"id":"dump_ordering_state","action":"dump_state"}

@@ -12,7 +12,6 @@ func Render(targetChat, text, cancelButton string, waitTimeoutMS int) []protocol
 	if cancelButton != "" {
 		commands = append(commands,
 			protocol.Command{ID: "cancel_case", Action: "click_button", ButtonText: cancelButton},
-			protocol.Command{ID: "wait_cancel", Action: "wait", TimeoutMS: waitTimeoutMS},
 		)
 	}
 	return commands

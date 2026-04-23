@@ -22,7 +22,7 @@ func TestBuildCompactTranscriptNormalizesKnownStates(t *testing.T) {
 		Snapshot: &state.ChatState{
 			Pinned: &state.PinnedMessage{
 				MessageID: 1,
-				Text:      "🧺 Главная\n\nСейчас отслеживаем: 1\nСкоро истекают: 1\nУже истекли: 0\n\nЧтобы добавить продукт, просто отправь текст, фото или голосовое.",
+				Text:      "🧺 Главная\n\nСейчас отслеживаем: 1\nСкоро истекают: 1\nУже истекли: 0\n\nЧтобы добавить продукт, просто отправь текст или голосовое.",
 				Buttons:   [][]state.InlineButton{{{Text: "⚙️ Настройки"}}},
 			},
 		},
@@ -36,7 +36,7 @@ func TestBuildCompactTranscriptNormalizesKnownStates(t *testing.T) {
 		Snapshot: &state.ChatState{
 			Pinned: &state.PinnedMessage{
 				MessageID: 1,
-				Text:      "🧺 Главная\n\nСейчас отслеживаем: 1\nСкоро истекают: 1\nУже истекли: 0\n\nЧтобы добавить продукт, просто отправь текст, фото или голосовое.",
+				Text:      "🧺 Главная\n\nСейчас отслеживаем: 1\nСкоро истекают: 1\nУже истекли: 0\n\nЧтобы добавить продукт, просто отправь текст или голосовое.",
 				Buttons:   [][]state.InlineButton{{{Text: "⚙️ Настройки"}}},
 			},
 		},
@@ -49,14 +49,17 @@ func TestBuildCompactTranscriptNormalizesKnownStates(t *testing.T) {
 		Snapshot: &state.ChatState{
 			Pinned: &state.PinnedMessage{
 				MessageID: 1,
-				Text:      "🧺 Главная\n\nСейчас отслеживаем: 1\nСкоро истекают: 1\nУже истекли: 0\n\nЧтобы добавить продукт, просто отправь текст, фото или голосовое.",
+				Text:      "🧺 Главная\n\nСейчас отслеживаем: 1\nСкоро истекают: 1\nУже истекли: 0\n\nЧтобы добавить продукт, просто отправь текст или голосовое.",
 				Buttons:   [][]state.InlineButton{{{Text: "⚙️ Настройки"}}},
 			},
 			Messages: []state.VisibleMessage{{
 				ID:      2,
 				Sender:  "bot",
 				Text:    "🧾 Новый продукт\n\nНазвание: молоко\nСрок: не указан\nИсточник: текст\n\n• укажи срок годности",
-				Buttons: [][]state.InlineButton{{{Text: "✅ Сохранить"}}, {{Text: "↩️ Отмена"}}},
+				Buttons: [][]state.InlineButton{
+					{{Text: "📝 Название"}, {Text: "📅 Срок"}},
+					{{Text: "↩️ Отмена"}, {Text: "✅ Сохранить"}},
+				},
 			}},
 		},
 	})
@@ -77,7 +80,7 @@ func TestBuildCompactTranscriptNormalizesKnownStates(t *testing.T) {
 	if compact.FinalStateLabel != "draft name=молоко date=missing source=текст status=needs_date" {
 		t.Fatalf("unexpected final state label: %q", compact.FinalStateLabel)
 	}
-	if got := strings.Join(compact.FinalButtons, ","); got != "save,cancel,settings" {
+	if got := strings.Join(compact.FinalButtons, ","); got != "edit_name,edit_date,cancel,save,settings" {
 		t.Fatalf("unexpected final buttons: %q", got)
 	}
 }

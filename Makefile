@@ -41,7 +41,7 @@ help:
 	@printf "  make run-block      # run a stateful block with optional reset/template rendering (SCENARIO=..., CHAT=..., RUN_BLOCK_ARGS=...)\\n"
 	@printf "  make run-text-matrix # run a text-case matrix from CASES=... (CHAT=...)\\n"
 	@printf "  make fixtures       # generate local media fixtures\\n"
-	@printf "  make run-suite      # run the full v1 suite (CHAT=...)\\n"
+	@printf "  make run-suite      # run the full Shelfy suite, including control-backed flows (CHAT=...)\\n"
 	@printf "  make rate-sweep     # binary-search safe action spacing (CHAT=..., PREPARE_SCENARIO=...)\\n"
 	@printf "  make clean          # remove generated local artifacts and default runtime lock\\n"
 

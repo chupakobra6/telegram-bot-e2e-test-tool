@@ -1,0 +1,5 @@
+# Covers unsupported message handling through a normal user document upload.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"send_document","action":"send_document","path":"@fixtures/e2e-document.txt","caption":"unsupported payload"}
+{"id":"wait_unsupported_feedback","action":"wait","timeout_ms":30000}
+{"id":"dump_unsupported","action":"dump_state"}

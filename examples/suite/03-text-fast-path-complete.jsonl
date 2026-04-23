@@ -1,0 +1,7 @@
+# Covers fast text path with a fully parseable product and confirmation.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"send_product","action":"send_text","text":"зефир завтра"}
+{"id":"wait_draft","action":"wait","timeout_ms":30000}
+{"id":"confirm_draft","action":"click_button","button_text":"✅ Сохранить"}
+{"id":"wait_saved","action":"wait","timeout_ms":30000}
+{"id":"dump_fast_path","action":"dump_state"}

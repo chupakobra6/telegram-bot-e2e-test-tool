@@ -3,5 +3,4 @@
 {"id":"send_text","action":"send_text","text":"кефир завтра"}
 {"id":"wait_draft","action":"wait","timeout_ms":12000}
 {"id":"cancel_draft","action":"click_button","button_text":"↩️ Отмена"}
-{"id":"wait_cancel","action":"wait","timeout_ms":12000}
 {"id":"dump_mixed","action":"dump_state"}

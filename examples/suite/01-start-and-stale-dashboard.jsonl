@@ -1,0 +1,8 @@
+# Covers repeated /start idempotence plus `/dashboard` returning the active dashboard to home.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"start_one","action":"send_text","text":"/start"}
+{"id":"start_two","action":"send_text","text":"/start"}
+{"id":"dashboard_home","action":"send_text","text":"/dashboard"}
+{"id":"open_settings","action":"click_button","button_text":"⚙️ Настройки"}
+{"id":"wait_settings","action":"wait","timeout_ms":60000}
+{"id":"dump_dashboard_contract","action":"dump_state"}

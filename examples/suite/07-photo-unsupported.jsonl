@@ -1,0 +1,6 @@
+# Requires fixtures from `make fixtures`.
+# Covers fail-closed handling for currently unsupported photo input.
+{"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
+{"id":"send_photo","action":"send_photo","path":"@fixtures/e2e-photo.png"}
+{"id":"wait_photo_feedback","action":"wait","timeout_ms":30000}
+{"id":"dump_photo_result","action":"dump_state"}
