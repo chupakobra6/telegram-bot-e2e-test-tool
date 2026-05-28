@@ -34,6 +34,11 @@ type fakeTransport struct {
 		messageID       int
 		data            []byte
 	}
+	deleteCalls []struct {
+		chat            string
+		messageThreadID int
+		messageIDs      []int
+	}
 	snapshots         []state.ChatState
 	syncCallsByTarget []struct {
 		chat            string
@@ -80,6 +85,15 @@ func (f *fakeTransport) ClickButton(_ context.Context, chat string, messageThrea
 		return err
 	}
 	return f.clickErr
+}
+
+func (f *fakeTransport) DeleteMessages(_ context.Context, chat string, messageThreadID int, messageIDs []int) error {
+	f.deleteCalls = append(f.deleteCalls, struct {
+		chat            string
+		messageThreadID int
+		messageIDs      []int
+	}{chat: chat, messageThreadID: messageThreadID, messageIDs: append([]int(nil), messageIDs...)})
+	return nil
 }
 
 func (f *fakeTransport) SyncChat(_ context.Context, chat string, messageThreadID int, _ int) (state.ChatState, error) {
@@ -634,6 +648,77 @@ func TestExecuteSelectChatCapturesSnapshot(t *testing.T) {
 	}
 	if events[1].Snapshot == nil || events[1].Snapshot.Target != "@bot" {
 		t.Fatalf("unexpected snapshot: %+v", events[1].Snapshot)
+	}
+}
+
+func TestExecuteDeleteVisibleMessagesKeepsTopicStructure(t *testing.T) {
+	before := state.ChatState{
+		Target:          "@group",
+		MessageThreadID: 10,
+		Pinned:          &state.PinnedMessage{MessageID: 20, Text: "Сегодня"},
+		Messages: []state.VisibleMessage{
+			{ID: 10, Sender: "peer", Kind: "text", Text: "topic starter"},
+			{ID: 11, Sender: "peer", Kind: "service", Text: "[service] topic created"},
+			{ID: 12, Sender: "bot", Kind: "text", Text: "intro"},
+			{ID: 20, Sender: "bot", Kind: "text", Text: "Сегодня", Pinned: true},
+			{ID: 30, Sender: "bot", Kind: "text", Text: "task card"},
+			{ID: 31, Sender: "self", Kind: "text", Text: "report"},
+		},
+	}
+	after := state.ChatState{
+		Target:          "@group",
+		MessageThreadID: 10,
+		Pinned:          &state.PinnedMessage{MessageID: 20, Text: "Сегодня"},
+		Messages: []state.VisibleMessage{
+			{ID: 10, Sender: "peer", Kind: "text", Text: "topic starter"},
+			{ID: 11, Sender: "peer", Kind: "service", Text: "[service] topic created"},
+			{ID: 12, Sender: "bot", Kind: "text", Text: "intro"},
+			{ID: 20, Sender: "bot", Kind: "text", Text: "Сегодня", Pinned: true},
+		},
+	}
+	transport := &fakeTransport{snapshots: []state.ChatState{before, after, after}}
+	var out bytes.Buffer
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:              "cleanup",
+		Action:          "delete_visible_messages",
+		Chat:            "@group",
+		MessageThreadID: 10,
+		KeepOldest:      true,
+	}); err != nil {
+		t.Fatalf("delete_visible_messages error = %v", err)
+	}
+
+	if len(transport.deleteCalls) != 1 {
+		t.Fatalf("expected one delete batch, got %d", len(transport.deleteCalls))
+	}
+	if got := transport.deleteCalls[0].messageIDs; len(got) != 2 || got[0] != 30 || got[1] != 31 {
+		t.Fatalf("unexpected deleted message ids: %+v", got)
+	}
+	events := decodeEvents(t, out.Bytes())
+	if len(events) != 2 || events[0].Type != "ack" || events[1].Type != "state_snapshot" {
+		t.Fatalf("unexpected event sequence: %+v", events)
+	}
+	if events[1].Message != "deleted 2 visible messages" {
+		t.Fatalf("unexpected cleanup message: %q", events[1].Message)
+	}
+}
+
+func TestDeletableVisibleMessageIDsDeletesOldestByDefault(t *testing.T) {
+	snapshot := state.ChatState{
+		Pinned: &state.PinnedMessage{MessageID: 20, Text: "pinned"},
+		Messages: []state.VisibleMessage{
+			{ID: 10, Kind: "service", Text: "[service] topic created"},
+			{ID: 12, Kind: "text", Text: "old test message"},
+			{ID: 20, Kind: "text", Text: "pinned", Pinned: true},
+			{ID: 21, Kind: "text", Text: "new test message"},
+		},
+	}
+
+	got := deletableVisibleMessageIDs(snapshot, 10, "", false)
+	if len(got) != 2 || got[0] != 12 || got[1] != 21 {
+		t.Fatalf("unexpected deletable ids: %+v", got)
 	}
 }
 

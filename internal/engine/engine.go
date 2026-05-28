@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,8 +24,11 @@ type Transport interface {
 	SendVoice(ctx context.Context, chat string, messageThreadID int, path string) error
 	SendAudio(ctx context.Context, chat string, messageThreadID int, path string) error
 	ClickButton(ctx context.Context, chat string, messageThreadID int, messageID int, data []byte) error
+	DeleteMessages(ctx context.Context, chat string, messageThreadID int, messageIDs []int) error
 	SyncChat(ctx context.Context, chat string, messageThreadID int, limit int) (state.ChatState, error)
 }
+
+const defaultDeleteVisibleMessageBatches = 8
 
 type Engine struct {
 	transport     Transport
@@ -124,6 +128,11 @@ func (e *Engine) Execute(ctx context.Context, cmd protocol.Command) error {
 			return e.emitError(cmd, chat, messageThreadID, err)
 		}
 		return e.emitAckAndSync(ctx, cmd, chat, messageThreadID)
+	case "delete_visible_messages":
+		if err := e.executeDeleteVisibleMessages(ctx, cmd, chat, messageThreadID); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
+		}
+		return nil
 	case "dump_state":
 		snapshot, err := e.sync(ctx, chat, messageThreadID)
 		if err != nil {
@@ -194,6 +203,108 @@ func (e *Engine) executeClick(ctx context.Context, cmd protocol.Command, chat st
 		return nil
 	}
 	return nil
+}
+
+func (e *Engine) executeDeleteVisibleMessages(ctx context.Context, cmd protocol.Command, chat string, messageThreadID int) error {
+	if err := e.emit(protocol.Event{
+		Type:            "ack",
+		CommandID:       cmd.ID,
+		Action:          cmd.Action,
+		Chat:            chat,
+		MessageThreadID: messageThreadID,
+		OK:              true,
+		Message:         "deleting visible chat messages",
+	}); err != nil {
+		return err
+	}
+
+	maxBatches := cmd.MaxBatches
+	if maxBatches <= 0 {
+		maxBatches = defaultDeleteVisibleMessageBatches
+	}
+
+	deleted := 0
+	limited := false
+	for batch := 0; batch < maxBatches; batch++ {
+		snapshot, err := e.sync(ctx, chat, messageThreadID)
+		if err != nil {
+			return err
+		}
+		messageIDs := deletableVisibleMessageIDs(snapshot, messageThreadID, cmd.MessageText, cmd.KeepOldest)
+		if len(messageIDs) == 0 {
+			e.setLastState(chat, messageThreadID, snapshot)
+			return e.emitDeleteSummary(ctx, cmd, chat, messageThreadID, deleted, false)
+		}
+		if err := e.transport.DeleteMessages(ctx, chat, messageThreadID, messageIDs); err != nil {
+			return err
+		}
+		deleted += len(messageIDs)
+	}
+	limited = true
+	return e.emitDeleteSummary(ctx, cmd, chat, messageThreadID, deleted, limited)
+}
+
+func (e *Engine) emitDeleteSummary(ctx context.Context, cmd protocol.Command, chat string, messageThreadID int, deleted int, limited bool) error {
+	snapshot, err := e.sync(ctx, chat, messageThreadID)
+	if err != nil {
+		return err
+	}
+	e.setLastState(chat, messageThreadID, snapshot)
+	message := fmt.Sprintf("deleted %d visible messages", deleted)
+	if limited {
+		message = fmt.Sprintf("deleted %d visible messages; max_batches reached", deleted)
+	}
+	return e.emit(protocol.Event{
+		Type:            "state_snapshot",
+		CommandID:       cmd.ID,
+		Action:          cmd.Action,
+		Chat:            chat,
+		MessageThreadID: messageThreadID,
+		OK:              true,
+		Message:         message,
+		Snapshot:        &snapshot,
+	})
+}
+
+func deletableVisibleMessageIDs(snapshot state.ChatState, messageThreadID int, messageText string, keepOldest bool) []int {
+	preserveOldest := keepOldest && strings.TrimSpace(messageText) == ""
+	oldestID := 0
+	if preserveOldest {
+		for _, msg := range snapshot.Messages {
+			if msg.ID <= 0 || msg.ID == messageThreadID || msg.Kind == "service" || msg.Pinned {
+				continue
+			}
+			if oldestID == 0 || msg.ID < oldestID {
+				oldestID = msg.ID
+			}
+		}
+	}
+
+	pinnedID := 0
+	if snapshot.Pinned != nil {
+		pinnedID = snapshot.Pinned.MessageID
+	}
+
+	seen := map[int]struct{}{}
+	messageIDs := make([]int, 0, len(snapshot.Messages))
+	for _, msg := range snapshot.Messages {
+		if msg.ID <= 0 {
+			continue
+		}
+		if msg.ID == messageThreadID || msg.ID == pinnedID || msg.ID == oldestID || msg.Pinned || msg.Kind == "service" {
+			continue
+		}
+		if !messageMatches(msg.Text, messageText) {
+			continue
+		}
+		if _, ok := seen[msg.ID]; ok {
+			continue
+		}
+		seen[msg.ID] = struct{}{}
+		messageIDs = append(messageIDs, msg.ID)
+	}
+	sort.Ints(messageIDs)
+	return messageIDs
 }
 
 func (e *Engine) prepareActionBaseline(ctx context.Context, chat string, messageThreadID int) error {

@@ -109,6 +109,15 @@ func commandSummary(cmd protocol.Command) string {
 			summary += " message_text=" + summarize(cmd.MessageText)
 		}
 		return summary
+	case "delete_visible_messages":
+		summary := "max_batches=" + strconv.Itoa(cmd.MaxBatches)
+		if cmd.KeepOldest {
+			summary += " keep_oldest=true"
+		}
+		if cmd.MessageText != "" {
+			summary += " message_text=" + summarize(cmd.MessageText)
+		}
+		return summary
 	case "wait":
 		return "timeout_ms=" + strconv.Itoa(cmd.TimeoutMS)
 	default:

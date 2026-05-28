@@ -337,6 +337,37 @@ func (s *Session) ClickButton(ctx context.Context, chat string, _ int, messageID
 	})
 }
 
+func (s *Session) DeleteMessages(ctx context.Context, chat string, _ int, messageIDs []int) error {
+	if len(messageIDs) == 0 {
+		return nil
+	}
+	target, err := s.resolveTarget(ctx, chat)
+	if err != nil {
+		return err
+	}
+	for _, chunk := range intChunks(messageIDs, 100) {
+		if err := s.performRPC(ctx, "delete_messages", true, func(callCtx context.Context) error {
+			switch peer := target.InputPeer.(type) {
+			case *tg.InputPeerChannel:
+				_, err := s.raw.ChannelsDeleteMessages(callCtx, &tg.ChannelsDeleteMessagesRequest{
+					Channel: &tg.InputChannel{ChannelID: peer.ChannelID, AccessHash: peer.AccessHash},
+					ID:      chunk,
+				})
+				return err
+			default:
+				_, err := s.raw.MessagesDeleteMessages(callCtx, &tg.MessagesDeleteMessagesRequest{
+					Revoke: true,
+					ID:     chunk,
+				})
+				return err
+			}
+		}); err != nil {
+			return fmt.Errorf("delete messages %v: %w", chunk, err)
+		}
+	}
+	return nil
+}
+
 func (s *Session) SyncChat(ctx context.Context, chat string, messageThreadID int, limit int) (state.ChatState, error) {
 	target, err := s.resolveTarget(ctx, chat)
 	if err != nil {
@@ -527,6 +558,21 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func intChunks(values []int, size int) [][]int {
+	if size <= 0 || len(values) == 0 {
+		return nil
+	}
+	chunks := make([][]int, 0, (len(values)+size-1)/size)
+	for start := 0; start < len(values); start += size {
+		end := start + size
+		if end > len(values) {
+			end = len(values)
+		}
+		chunks = append(chunks, values[start:end])
+	}
+	return chunks
 }
 
 func (s *Session) performRPC(ctx context.Context, operation string, outgoing bool, fn func(context.Context) error) error {

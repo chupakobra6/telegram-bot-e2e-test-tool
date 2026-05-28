@@ -70,6 +70,7 @@ Supported actions:
 - `send_audio`
 - `send_document`
 - `click_button`
+- `delete_visible_messages`
 - `wait`
 - `dump_state`
 
@@ -81,11 +82,14 @@ Use `tg-e2e-tool chats --groups --filter TrackMate --topics --admins` to find th
 
 For noisy chats with repeated inline buttons, `click_button` can be scoped with `message_text`. The button is clicked only on a visible message whose text contains that fragment.
 
+For reusable test forum groups, `delete_visible_messages` removes the currently visible non-service messages from the selected chat/topic. It keeps the topic starter, pinned message, and Telegram service messages, so cleanup scenarios can preserve topic structure and pinned intro/control messages. Use `max_batches` to keep walking older history windows; the default is 8 batches. If a product intentionally leaves its intro unpinned, pass `keep_oldest: true` to keep the earliest ordinary visible message too.
+
 ```json
 {"id":"select","action":"select_chat","chat":"@your_forum_group","message_thread_id":12345}
 {"id":"start","action":"send_text","text":"/start"}
 {"id":"open_report","action":"click_button","button_text":"🏁 Report","message_text":"Task title"}
 {"id":"wait","action":"wait","timeout_ms":15000}
+{"id":"cleanup","action":"delete_visible_messages","max_batches":8}
 ```
 
 ## Bundled Shelfy suite
@@ -173,4 +177,5 @@ Recommended triage order:
 - Relative media paths resolve relative to the scenario file. Paths starting with `@fixtures/` resolve to the tool-owned `artifacts/fixtures/` directory.
 - `send_photo_group` sends one Telegram album/media group with 2-10 photo paths and one caption applied to every item:
   `{"id":"album","action":"send_photo_group","paths":["@fixtures/e2e-photo.png","@fixtures/e2e-receipt.png"],"caption":"общая подпись"}`
+- `delete_visible_messages` uses the MTProto user account. In supergroups, that account needs enough rights to delete bot messages if the cleanup should remove both test-user messages and bot replies.
 - Do not run `login`, `interactive`, `run-scenario`, `run-block`, `run-text-matrix`, or `rate-sweep` in parallel with the same Telegram account.

@@ -738,7 +738,12 @@ func normalizeEventMessage(evt *protocol.Event) string {
 		return "pending_wait_reused"
 	case "waiting for visible chat changes":
 		return "waiting"
+	case "deleting visible chat messages":
+		return "cleanup_deleting"
 	default:
+		if strings.HasPrefix(message, "deleted ") && strings.Contains(message, " visible messages") {
+			return "cleanup_deleted"
+		}
 		return compactExcerpt(message, messageExcerptLimit)
 	}
 }

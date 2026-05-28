@@ -121,6 +121,22 @@ func TestParseCommandLineClickButtonMessageText(t *testing.T) {
 	}
 }
 
+func TestParseCommandLineDeleteVisibleMessages(t *testing.T) {
+	cmd, err := ParseCommandLine([]byte(`{"action":"delete_visible_messages","max_batches":3,"keep_oldest":true}`))
+	if err != nil {
+		t.Fatalf("ParseCommandLine() error = %v", err)
+	}
+	if cmd.Action != "delete_visible_messages" || cmd.MaxBatches != 3 || !cmd.KeepOldest {
+		t.Fatalf("unexpected command: %+v", cmd)
+	}
+}
+
+func TestParseCommandLineDeleteVisibleMessagesRejectsNegativeBatchLimit(t *testing.T) {
+	if _, err := ParseCommandLine([]byte(`{"action":"delete_visible_messages","max_batches":-1}`)); err == nil {
+		t.Fatal("expected negative max_batches to fail")
+	}
+}
+
 func TestParseCommandLineSelectChatRequiresChat(t *testing.T) {
 	if _, err := ParseCommandLine([]byte(`{"action":"select_chat"}`)); err == nil {
 		t.Fatal("expected missing chat to fail")

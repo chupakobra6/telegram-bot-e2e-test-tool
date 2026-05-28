@@ -125,7 +125,23 @@ External product repos can reference tool-owned fixtures directly inside scenari
 {"id":"album","action":"send_photo_group","paths":["@fixtures/e2e-photo.png","@fixtures/e2e-receipt.png"],"caption":"общая подпись"}
 ```
 
-## 8. Run a text matrix
+## 8. Clean a reusable forum topic
+
+When a product suite reuses the same Telegram forum group, add a cleanup scenario
+at the end of the product-owned suite:
+
+```json
+{"id":"select","action":"select_chat","chat":"@your_forum_group","message_thread_id":12345}
+{"id":"cleanup","action":"delete_visible_messages","max_batches":8}
+```
+
+The cleanup action deletes visible non-service messages through the MTProto user
+account and keeps the topic starter, pinned message, and Telegram service
+messages. If a product intentionally leaves its intro unpinned, pass
+`keep_oldest: true` to keep the earliest ordinary visible message too. In
+supergroups, the MTProto user needs deletion rights to remove bot messages too.
+
+## 9. Run a text matrix
 
 ```bash
 make run-text-matrix \
@@ -138,7 +154,7 @@ Optional overrides:
 - `CANCEL_BUTTON_TEXT=↩️ Отмена`
 - `WAIT_TIMEOUT_MS=12000`
 
-## 9. Run a stateful block
+## 10. Run a stateful block
 
 ```bash
 CHAT=@your_bot_username CONTROL_URL=http://127.0.0.1:8081 \
@@ -156,7 +172,7 @@ go run ./cmd/tg-e2e-tool run-block \
 
 `CONTROL_URL` is the preferred control endpoint variable. `SHELFY_DEV_CONTROL_URL` remains only as a compatibility alias.
 
-## 10. Probe safe action spacing
+## 11. Probe safe action spacing
 
 ```bash
 make rate-sweep CHAT=@your_bot_username
@@ -173,7 +189,7 @@ go run ./cmd/tg-e2e-tool rate-sweep \
   path/to/custom-bench.jsonl
 ```
 
-## 11. Transcript triage
+## 12. Transcript triage
 
 After `run-scenario` or `run-suite`, read artifacts in this order:
 

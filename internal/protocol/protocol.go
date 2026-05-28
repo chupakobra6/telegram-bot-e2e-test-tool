@@ -19,6 +19,8 @@ type Command struct {
 	MessageThreadID int      `json:"message_thread_id,omitempty"`
 	TimeoutMS       int      `json:"timeout_ms,omitempty"`
 	MessageOffset   int      `json:"message_offset,omitempty"`
+	MaxBatches      int      `json:"max_batches,omitempty"`
+	KeepOldest      bool     `json:"keep_oldest,omitempty"`
 	Text            string   `json:"text,omitempty"`
 	Path            string   `json:"path,omitempty"`
 	Paths           []string `json:"paths,omitempty"`
@@ -93,6 +95,10 @@ func (c Command) Validate() error {
 		}
 		if c.MessageOffset < 0 {
 			return fmt.Errorf("click_button requires message_offset >= 0")
+		}
+	case "delete_visible_messages":
+		if c.MaxBatches < 0 {
+			return fmt.Errorf("delete_visible_messages requires max_batches >= 0")
 		}
 	case "wait", "dump_state":
 	default:
