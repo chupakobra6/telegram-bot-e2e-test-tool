@@ -204,6 +204,7 @@ func TestRPCTimeoutForOperation(t *testing.T) {
 		{operation: "send_text", want: defaultRPCTimeout},
 		{operation: "click_button", want: defaultClickRPCTimeout},
 		{operation: "send_photo", want: defaultMediaRPCTimeout},
+		{operation: "send_photo_group", want: defaultMediaRPCTimeout},
 		{operation: "send_audio", want: defaultMediaRPCTimeout},
 		{operation: "get_dialogs", want: defaultDialogRPCTimeout},
 	}

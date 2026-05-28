@@ -12,27 +12,32 @@ import (
 )
 
 type Command struct {
-	ID            string `json:"id,omitempty"`
-	Action        string `json:"action"`
-	Chat          string `json:"chat,omitempty"`
-	TimeoutMS     int    `json:"timeout_ms,omitempty"`
-	MessageOffset int    `json:"message_offset,omitempty"`
-	Text          string `json:"text,omitempty"`
-	Path          string `json:"path,omitempty"`
-	Caption       string `json:"caption,omitempty"`
-	ButtonText    string `json:"button_text,omitempty"`
+	ID              string   `json:"id,omitempty"`
+	Action          string   `json:"action"`
+	Chat            string   `json:"chat,omitempty"`
+	Topic           int      `json:"topic,omitempty"`
+	MessageThreadID int      `json:"message_thread_id,omitempty"`
+	TimeoutMS       int      `json:"timeout_ms,omitempty"`
+	MessageOffset   int      `json:"message_offset,omitempty"`
+	Text            string   `json:"text,omitempty"`
+	Path            string   `json:"path,omitempty"`
+	Paths           []string `json:"paths,omitempty"`
+	Caption         string   `json:"caption,omitempty"`
+	ButtonText      string   `json:"button_text,omitempty"`
+	MessageText     string   `json:"message_text,omitempty"`
 }
 
 type Event struct {
-	Type      string           `json:"type"`
-	CommandID string           `json:"command_id,omitempty"`
-	Action    string           `json:"action,omitempty"`
-	Chat      string           `json:"chat,omitempty"`
-	OK        bool             `json:"ok,omitempty"`
-	Message   string           `json:"message,omitempty"`
-	Error     string           `json:"error,omitempty"`
-	Snapshot  *state.ChatState `json:"snapshot,omitempty"`
-	Diff      *state.ChatDiff  `json:"diff,omitempty"`
+	Type            string           `json:"type"`
+	CommandID       string           `json:"command_id,omitempty"`
+	Action          string           `json:"action,omitempty"`
+	Chat            string           `json:"chat,omitempty"`
+	MessageThreadID int              `json:"message_thread_id,omitempty"`
+	OK              bool             `json:"ok,omitempty"`
+	Message         string           `json:"message,omitempty"`
+	Error           string           `json:"error,omitempty"`
+	Snapshot        *state.ChatState `json:"snapshot,omitempty"`
+	Diff            *state.ChatDiff  `json:"diff,omitempty"`
 }
 
 func ParseCommandLine(line []byte) (Command, error) {
@@ -50,6 +55,9 @@ func (c Command) Validate() error {
 	if strings.TrimSpace(c.Action) == "" {
 		return fmt.Errorf("command action is required")
 	}
+	if err := c.validateThread(); err != nil {
+		return err
+	}
 	switch c.Action {
 	case "select_chat":
 		if strings.TrimSpace(c.Chat) == "" {
@@ -62,6 +70,18 @@ func (c Command) Validate() error {
 	case "send_photo", "send_document":
 		if strings.TrimSpace(c.Path) == "" {
 			return fmt.Errorf("%s requires path", c.Action)
+		}
+	case "send_photo_group":
+		if len(c.Paths) < 2 {
+			return fmt.Errorf("send_photo_group requires at least two paths")
+		}
+		if len(c.Paths) > 10 {
+			return fmt.Errorf("send_photo_group supports at most ten paths")
+		}
+		for i, path := range c.Paths {
+			if strings.TrimSpace(path) == "" {
+				return fmt.Errorf("send_photo_group path %d is empty", i+1)
+			}
 		}
 	case "send_voice", "send_audio":
 		if strings.TrimSpace(c.Path) == "" {
@@ -77,6 +97,30 @@ func (c Command) Validate() error {
 	case "wait", "dump_state":
 	default:
 		return fmt.Errorf("unsupported action %q", c.Action)
+	}
+	return nil
+}
+
+func (c Command) ThreadID() int {
+	if c.MessageThreadID != 0 {
+		return c.MessageThreadID
+	}
+	return c.Topic
+}
+
+func (c Command) HasThreadID() bool {
+	return c.Topic != 0 || c.MessageThreadID != 0
+}
+
+func (c Command) validateThread() error {
+	if c.Topic < 0 {
+		return fmt.Errorf("topic requires topic >= 0")
+	}
+	if c.MessageThreadID < 0 {
+		return fmt.Errorf("message_thread_id requires message_thread_id >= 0")
+	}
+	if c.Topic != 0 && c.MessageThreadID != 0 && c.Topic != c.MessageThreadID {
+		return fmt.Errorf("topic and message_thread_id must match when both are set")
 	}
 	return nil
 }

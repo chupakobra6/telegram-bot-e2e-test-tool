@@ -57,9 +57,67 @@ func TestParseCommandLineSendDocument(t *testing.T) {
 	}
 }
 
+func TestParseCommandLineSendPhotoGroup(t *testing.T) {
+	cmd, err := ParseCommandLine([]byte(`{"action":"send_photo_group","paths":["one.png","two.png"],"caption":"общая подпись"}`))
+	if err != nil {
+		t.Fatalf("ParseCommandLine() error = %v", err)
+	}
+	if cmd.Action != "send_photo_group" || len(cmd.Paths) != 2 || cmd.Caption != "общая подпись" {
+		t.Fatalf("unexpected command: %+v", cmd)
+	}
+}
+
+func TestParseCommandLineSendPhotoGroupRequiresTwoPaths(t *testing.T) {
+	if _, err := ParseCommandLine([]byte(`{"action":"send_photo_group","paths":["one.png"]}`)); err == nil {
+		t.Fatal("expected single-photo group to fail")
+	}
+}
+
+func TestParseCommandLineTopicAlias(t *testing.T) {
+	cmd, err := ParseCommandLine([]byte(`{"action":"send_text","topic":123,"text":"hello"}`))
+	if err != nil {
+		t.Fatalf("ParseCommandLine() error = %v", err)
+	}
+	if cmd.ThreadID() != 123 || !cmd.HasThreadID() {
+		t.Fatalf("unexpected thread id: %+v", cmd)
+	}
+}
+
+func TestParseCommandLineMessageThreadID(t *testing.T) {
+	cmd, err := ParseCommandLine([]byte(`{"action":"send_text","message_thread_id":456,"text":"hello"}`))
+	if err != nil {
+		t.Fatalf("ParseCommandLine() error = %v", err)
+	}
+	if cmd.ThreadID() != 456 || !cmd.HasThreadID() {
+		t.Fatalf("unexpected thread id: %+v", cmd)
+	}
+}
+
+func TestParseCommandLineRejectsConflictingTopicAliases(t *testing.T) {
+	if _, err := ParseCommandLine([]byte(`{"action":"send_text","topic":123,"message_thread_id":456,"text":"hello"}`)); err == nil {
+		t.Fatal("expected conflicting topic aliases to fail")
+	}
+}
+
+func TestParseCommandLineRejectsNegativeTopic(t *testing.T) {
+	if _, err := ParseCommandLine([]byte(`{"action":"send_text","topic":-1,"text":"hello"}`)); err == nil {
+		t.Fatal("expected negative topic to fail")
+	}
+}
+
 func TestParseCommandLineClickButtonNegativeOffsetRejected(t *testing.T) {
 	if _, err := ParseCommandLine([]byte(`{"action":"click_button","button_text":"Open","message_offset":-1}`)); err == nil {
 		t.Fatal("expected negative message_offset to fail")
+	}
+}
+
+func TestParseCommandLineClickButtonMessageText(t *testing.T) {
+	cmd, err := ParseCommandLine([]byte(`{"action":"click_button","button_text":"Open","message_text":"Task A"}`))
+	if err != nil {
+		t.Fatalf("ParseCommandLine() error = %v", err)
+	}
+	if cmd.ButtonText != "Open" || cmd.MessageText != "Task A" {
+		t.Fatalf("unexpected command: %+v", cmd)
 	}
 }
 

@@ -16,41 +16,64 @@ import (
 
 type fakeTransport struct {
 	sendTextCalls []struct {
-		chat string
-		text string
+		chat            string
+		messageThreadID int
+		text            string
+	}
+	sendPhotoGroupCalls []struct {
+		chat            string
+		messageThreadID int
+		paths           []string
+		caption         string
 	}
 	clickErrs  []error
 	clickErr   error
 	clickCalls []struct {
-		chat      string
-		messageID int
-		data      []byte
+		chat            string
+		messageThreadID int
+		messageID       int
+		data            []byte
 	}
-	snapshots []state.ChatState
+	snapshots         []state.ChatState
+	syncCallsByTarget []struct {
+		chat            string
+		messageThreadID int
+	}
 	syncCalls int
 }
 
-func (f *fakeTransport) SendText(_ context.Context, chat string, text string) error {
+func (f *fakeTransport) SendText(_ context.Context, chat string, messageThreadID int, text string) error {
 	f.sendTextCalls = append(f.sendTextCalls, struct {
-		chat string
-		text string
-	}{chat: chat, text: text})
+		chat            string
+		messageThreadID int
+		text            string
+	}{chat: chat, messageThreadID: messageThreadID, text: text})
 	return nil
 }
 
-func (f *fakeTransport) SendPhoto(context.Context, string, string, string) error { return nil }
-func (f *fakeTransport) SendDocument(context.Context, string, string, string) error {
+func (f *fakeTransport) SendPhoto(context.Context, string, int, string, string) error { return nil }
+func (f *fakeTransport) SendPhotoGroup(_ context.Context, chat string, messageThreadID int, paths []string, caption string) error {
+	f.sendPhotoGroupCalls = append(f.sendPhotoGroupCalls, struct {
+		chat            string
+		messageThreadID int
+		paths           []string
+		caption         string
+	}{chat: chat, messageThreadID: messageThreadID, paths: append([]string(nil), paths...), caption: caption})
 	return nil
 }
-func (f *fakeTransport) SendVoice(context.Context, string, string) error { return nil }
-func (f *fakeTransport) SendAudio(context.Context, string, string) error { return nil }
+func (f *fakeTransport) SendDocument(context.Context, string, int, string, string) error {
+	return nil
+}
+func (f *fakeTransport) SendVoice(context.Context, string, int, string) error { return nil }
+func (f *fakeTransport) SendAudio(context.Context, string, int, string) error { return nil }
 
-func (f *fakeTransport) ClickButton(_ context.Context, chat string, messageID int, data []byte) error {
+func (f *fakeTransport) ClickButton(_ context.Context, chat string, messageThreadID int, messageID int, data []byte) error {
 	f.clickCalls = append(f.clickCalls, struct {
-		chat      string
-		messageID int
-		data      []byte
-	}{chat: chat, messageID: messageID, data: data})
+		chat            string
+		messageThreadID int
+		messageID       int
+		data            []byte
+	}{chat: chat, messageThreadID: messageThreadID, messageID: messageID, data: data})
 	if len(f.clickErrs) > 0 {
 		err := f.clickErrs[0]
 		f.clickErrs = f.clickErrs[1:]
@@ -59,7 +82,11 @@ func (f *fakeTransport) ClickButton(_ context.Context, chat string, messageID in
 	return f.clickErr
 }
 
-func (f *fakeTransport) SyncChat(_ context.Context, _ string, _ int) (state.ChatState, error) {
+func (f *fakeTransport) SyncChat(_ context.Context, chat string, messageThreadID int, _ int) (state.ChatState, error) {
+	f.syncCallsByTarget = append(f.syncCallsByTarget, struct {
+		chat            string
+		messageThreadID int
+	}{chat: chat, messageThreadID: messageThreadID})
 	if len(f.snapshots) == 0 {
 		return state.ChatState{}, nil
 	}
@@ -118,6 +145,140 @@ func TestExecuteSendText(t *testing.T) {
 	}
 	if events[0].Type != "ack" || events[1].Type != "state_snapshot" || events[2].Type != "ack" || events[3].Type != "state_snapshot" {
 		t.Fatalf("unexpected event sequence: %+v", events)
+	}
+}
+
+func TestExecuteSendPhotoGroup(t *testing.T) {
+	transport := &fakeTransport{
+		snapshots: []state.ChatState{
+			{Target: "@group", MessageThreadID: 12},
+			{Target: "@group", MessageThreadID: 12},
+		},
+	}
+	var out bytes.Buffer
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:              "select",
+		Action:          "select_chat",
+		Chat:            "@group",
+		MessageThreadID: 12,
+	}); err != nil {
+		t.Fatalf("select_chat error = %v", err)
+	}
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:      "album",
+		Action:  "send_photo_group",
+		Paths:   []string{"/tmp/one.png", "/tmp/two.png"},
+		Caption: "общая подпись",
+	}); err != nil {
+		t.Fatalf("send_photo_group error = %v", err)
+	}
+
+	if len(transport.sendPhotoGroupCalls) != 1 {
+		t.Fatalf("expected 1 photo group call, got %d", len(transport.sendPhotoGroupCalls))
+	}
+	got := transport.sendPhotoGroupCalls[0]
+	if got.chat != "@group" || got.messageThreadID != 12 || got.caption != "общая подпись" {
+		t.Fatalf("unexpected photo group call: %+v", got)
+	}
+	if len(got.paths) != 2 || got.paths[0] != "/tmp/one.png" || got.paths[1] != "/tmp/two.png" {
+		t.Fatalf("unexpected paths: %+v", got.paths)
+	}
+}
+
+func TestExecuteCarriesSelectedTopicToCommands(t *testing.T) {
+	transport := &fakeTransport{
+		snapshots: []state.ChatState{
+			{
+				Target:          "@group",
+				MessageThreadID: 123,
+				Messages:        []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "topic dashboard"}},
+			},
+			{
+				Target:          "@group",
+				MessageThreadID: 123,
+				Messages:        []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "topic dashboard"}},
+			},
+		},
+	}
+	var out bytes.Buffer
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "select",
+		Action: "select_chat",
+		Chat:   "@group",
+		Topic:  123,
+	}); err != nil {
+		t.Fatalf("select_chat error = %v", err)
+	}
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "start",
+		Action: "send_text",
+		Text:   "/start",
+	}); err != nil {
+		t.Fatalf("send_text error = %v", err)
+	}
+	if len(transport.sendTextCalls) != 1 {
+		t.Fatalf("expected 1 sendText call, got %d", len(transport.sendTextCalls))
+	}
+	if got := transport.sendTextCalls[0]; got.chat != "@group" || got.messageThreadID != 123 || got.text != "/start" {
+		t.Fatalf("unexpected sendText call: %+v", got)
+	}
+	for _, call := range transport.syncCallsByTarget {
+		if call.chat != "@group" || call.messageThreadID != 123 {
+			t.Fatalf("unexpected sync target: %+v", call)
+		}
+	}
+
+	events := decodeEvents(t, out.Bytes())
+	for _, event := range events {
+		if event.MessageThreadID != 123 {
+			t.Fatalf("event missing topic: %+v", event)
+		}
+	}
+	if events[1].Snapshot == nil || events[1].Snapshot.MessageThreadID != 123 {
+		t.Fatalf("snapshot missing topic: %+v", events[1].Snapshot)
+	}
+}
+
+func TestExecuteUsesSeparateBaselinePerTopic(t *testing.T) {
+	transport := &fakeTransport{
+		snapshots: []state.ChatState{
+			{Target: "@group", MessageThreadID: 10, Messages: []state.VisibleMessage{{ID: 1, Sender: "bot", Text: "topic 10"}}},
+			{Target: "@group", MessageThreadID: 20, Messages: []state.VisibleMessage{{ID: 2, Sender: "bot", Text: "topic 20 before"}}},
+			{Target: "@group", MessageThreadID: 20, Messages: []state.VisibleMessage{{ID: 2, Sender: "bot", Text: "topic 20 after"}}},
+		},
+	}
+	var out bytes.Buffer
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:              "select",
+		Action:          "select_chat",
+		Chat:            "@group",
+		MessageThreadID: 10,
+	}); err != nil {
+		t.Fatalf("select_chat error = %v", err)
+	}
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:              "send",
+		Action:          "send_text",
+		Chat:            "@group",
+		MessageThreadID: 20,
+		Text:            "hello topic 20",
+	}); err != nil {
+		t.Fatalf("send_text error = %v", err)
+	}
+	if len(transport.syncCallsByTarget) != 3 {
+		t.Fatalf("expected select sync plus topic-20 baseline and follow-up sync, got %+v", transport.syncCallsByTarget)
+	}
+	if transport.syncCallsByTarget[1].messageThreadID != 20 || transport.syncCallsByTarget[2].messageThreadID != 20 {
+		t.Fatalf("expected topic 20 to get its own baseline, got %+v", transport.syncCallsByTarget)
+	}
+	if len(transport.sendTextCalls) != 1 || transport.sendTextCalls[0].messageThreadID != 20 {
+		t.Fatalf("unexpected sendText calls: %+v", transport.sendTextCalls)
 	}
 }
 
@@ -520,12 +681,43 @@ func TestFindButtonUsesLatestVisibleBotMessage(t *testing.T) {
 		},
 	}
 
-	messageID, callbackData, err := findButton(snapshot, "Open", 0)
+	messageID, callbackData, err := findButton(snapshot, "Open", 0, "")
 	if err != nil {
 		t.Fatalf("findButton() error = %v", err)
 	}
 	if messageID != 3 || callbackData != "bmV3" {
 		t.Fatalf("unexpected button resolution: messageID=%d callbackData=%q", messageID, callbackData)
+	}
+}
+
+func TestFindButtonCanBeScopedByMessageText(t *testing.T) {
+	snapshot := state.ChatState{
+		Messages: []state.VisibleMessage{
+			{
+				ID:     1,
+				Sender: "bot",
+				Text:   "Task A",
+				Buttons: [][]state.InlineButton{{
+					{Text: "Open", Kind: "callback", CallbackData: "task-a"},
+				}},
+			},
+			{
+				ID:     2,
+				Sender: "bot",
+				Text:   "Task B",
+				Buttons: [][]state.InlineButton{{
+					{Text: "Open", Kind: "callback", CallbackData: "task-b"},
+				}},
+			},
+		},
+	}
+
+	messageID, callbackData, err := findButton(snapshot, "Open", 0, "Task A")
+	if err != nil {
+		t.Fatalf("findButton() error = %v", err)
+	}
+	if messageID != 1 || callbackData != "task-a" {
+		t.Fatalf("unexpected scoped button resolution: messageID=%d callbackData=%q", messageID, callbackData)
 	}
 }
 
@@ -557,7 +749,7 @@ func TestFindButtonPrefersPinnedMessageOverVisibleDuplicate(t *testing.T) {
 		},
 	}
 
-	messageID, callbackData, err := findButton(snapshot, "⚙️ Настройки", 0)
+	messageID, callbackData, err := findButton(snapshot, "⚙️ Настройки", 0, "")
 	if err != nil {
 		t.Fatalf("findButton() error = %v", err)
 	}
@@ -595,7 +787,7 @@ func TestFindButtonFallsBackToLatestVisibleNonPinnedMessage(t *testing.T) {
 		},
 	}
 
-	messageID, callbackData, err := findButton(snapshot, "✅ Сохранить", 0)
+	messageID, callbackData, err := findButton(snapshot, "✅ Сохранить", 0, "")
 	if err != nil {
 		t.Fatalf("findButton() error = %v", err)
 	}
@@ -618,7 +810,7 @@ func TestFindButtonUsesHiddenPinnedMessage(t *testing.T) {
 		},
 	}
 
-	messageID, callbackData, err := findButton(snapshot, "⚙️ Настройки", 0)
+	messageID, callbackData, err := findButton(snapshot, "⚙️ Настройки", 0, "")
 	if err != nil {
 		t.Fatalf("findButton() error = %v", err)
 	}
@@ -655,7 +847,7 @@ func TestFindButtonSupportsMessageOffset(t *testing.T) {
 		},
 	}
 
-	messageID, callbackData, err := findButton(snapshot, "📊 Статистика", 1)
+	messageID, callbackData, err := findButton(snapshot, "📊 Статистика", 1, "")
 	if err != nil {
 		t.Fatalf("findButton() error = %v", err)
 	}

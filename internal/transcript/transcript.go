@@ -50,20 +50,22 @@ func (t *Transcript) RenderText() string {
 		switch event.Kind {
 		case "command":
 			lines = append(lines, fmt.Sprintf(
-				"%s [command] id=%s action=%s chat=%s %s",
+				"%s [command] id=%s action=%s chat=%s thread=%s %s",
 				event.At.Format(time.RFC3339),
 				valueOrDash(event.Command.ID),
 				event.Command.Action,
 				valueOrDash(event.Command.Chat),
+				threadOrDash(event.Command.ThreadID()),
 				commandSummary(*event.Command),
 			))
 		case "event":
 			lines = append(lines, fmt.Sprintf(
-				"%s [event] type=%s command_id=%s chat=%s ok=%t msg=%s %s",
+				"%s [event] type=%s command_id=%s chat=%s thread=%s ok=%t msg=%s %s",
 				event.At.Format(time.RFC3339),
 				event.Output.Type,
 				valueOrDash(event.Output.CommandID),
 				valueOrDash(event.Output.Chat),
+				threadOrDash(event.Output.MessageThreadID),
 				event.Output.OK,
 				valueOrDash(event.Output.Message),
 				eventSummary(event.Output),
@@ -97,10 +99,16 @@ func commandSummary(cmd protocol.Command) string {
 	switch cmd.Action {
 	case "send_text":
 		return "text=" + summarize(cmd.Text)
+	case "send_photo_group":
+		return "paths=" + strconv.Itoa(len(cmd.Paths)) + " caption=" + summarize(cmd.Caption)
 	case "send_photo", "send_voice", "send_audio":
 		return "path=" + summarize(cmd.Path)
 	case "click_button":
-		return "button_text=" + summarize(cmd.ButtonText)
+		summary := "button_text=" + summarize(cmd.ButtonText)
+		if cmd.MessageText != "" {
+			summary += " message_text=" + summarize(cmd.MessageText)
+		}
+		return summary
 	case "wait":
 		return "timeout_ms=" + strconv.Itoa(cmd.TimeoutMS)
 	default:
@@ -118,6 +126,9 @@ func eventSummary(evt *protocol.Event) string {
 	}
 	if evt.Snapshot != nil {
 		parts = append(parts, "messages="+strconv.Itoa(len(evt.Snapshot.Messages)))
+		if evt.Snapshot.MessageThreadID > 0 {
+			parts = append(parts, "thread="+strconv.Itoa(evt.Snapshot.MessageThreadID))
+		}
 		if evt.Snapshot.Pinned != nil {
 			parts = append(parts, "pinned="+strconv.Itoa(evt.Snapshot.Pinned.MessageID)+":"+summarize(evt.Snapshot.Pinned.Text))
 		}
@@ -142,4 +153,11 @@ func valueOrDash(v string) string {
 		return "-"
 	}
 	return v
+}
+
+func threadOrDash(v int) string {
+	if v <= 0 {
+		return "-"
+	}
+	return strconv.Itoa(v)
 }

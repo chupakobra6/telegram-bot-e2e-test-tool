@@ -53,19 +53,28 @@ func ReadReaderWithOptions(baseDir string, r io.Reader, opts ReadOptions, fn fun
 			cmd.Chat = opts.TargetChat
 		}
 		if cmd.Path != "" {
-			switch {
-			case strings.HasPrefix(cmd.Path, DefaultFixturePlaceholder):
-				fixtureDir := opts.FixtureDir
-				if strings.TrimSpace(fixtureDir) == "" {
-					fixtureDir = DefaultFixtureDir
-				}
-				cmd.Path = filepath.Join(fixtureDir, strings.TrimPrefix(cmd.Path, DefaultFixturePlaceholder))
-			case !filepath.IsAbs(cmd.Path):
-				cmd.Path = filepath.Join(baseDir, cmd.Path)
-			}
+			cmd.Path = resolveMediaPath(baseDir, opts, cmd.Path)
+		}
+		for i, path := range cmd.Paths {
+			cmd.Paths[i] = resolveMediaPath(baseDir, opts, path)
 		}
 		return fn(cmd)
 	})
+}
+
+func resolveMediaPath(baseDir string, opts ReadOptions, path string) string {
+	switch {
+	case strings.HasPrefix(path, DefaultFixturePlaceholder):
+		fixtureDir := opts.FixtureDir
+		if strings.TrimSpace(fixtureDir) == "" {
+			fixtureDir = DefaultFixtureDir
+		}
+		return filepath.Join(fixtureDir, strings.TrimPrefix(path, DefaultFixturePlaceholder))
+	case !filepath.IsAbs(path):
+		return filepath.Join(baseDir, path)
+	default:
+		return path
+	}
 }
 
 func UsesChatPlaceholder(path string) (bool, error) {

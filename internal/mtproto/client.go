@@ -51,7 +51,7 @@ type Session struct {
 	actionSpacing  time.Duration
 	rpcSpacing     time.Duration
 	pinnedTTL      time.Duration
-	pinnedCache    map[int64]pinnedCacheEntry
+	pinnedCache    map[pinnedCacheKey]pinnedCacheEntry
 	retryFloodWait bool
 }
 
@@ -65,6 +65,11 @@ type resolvedTarget struct {
 type pinnedCacheEntry struct {
 	pinned    *state.PinnedMessage
 	fetchedAt time.Time
+}
+
+type pinnedCacheKey struct {
+	peerID          int64
+	messageThreadID int
 }
 
 type Stats struct {
@@ -211,7 +216,7 @@ func (c *Client) RunAuthorized(ctx context.Context, fn func(context.Context, *Se
 			actionSpacing:  c.cfg.ActionSpacing,
 			rpcSpacing:     c.cfg.RPCSpacing,
 			pinnedTTL:      c.cfg.PinnedCacheTTL,
-			pinnedCache:    map[int64]pinnedCacheEntry{},
+			pinnedCache:    map[pinnedCacheKey]pinnedCacheEntry{},
 			retryFloodWait: true,
 		}
 		return fn(runCtx, session)
@@ -225,23 +230,23 @@ func unauthorizedRuntimeError(sessionPath string) error {
 	return fmt.Errorf("telegram session is not authorized: no valid Telegram session is available; run `tg-e2e-tool login`")
 }
 
-func (s *Session) SendText(ctx context.Context, chat string, text string) error {
+func (s *Session) SendText(ctx context.Context, chat string, messageThreadID int, text string) error {
 	target, err := s.resolveTarget(ctx, chat)
 	if err != nil {
 		return err
 	}
 	return s.performRPC(ctx, "send_text", true, func(callCtx context.Context) error {
-		_, err := s.sender.To(target.InputPeer).Text(callCtx, text)
+		_, err := topicBuilder(s.sender, target.InputPeer, messageThreadID).Text(callCtx, text)
 		return err
 	})
 }
 
-func (s *Session) SendPhoto(ctx context.Context, chat string, path string, caption string) error {
+func (s *Session) SendPhoto(ctx context.Context, chat string, messageThreadID int, path string, caption string) error {
 	target, err := s.resolveTarget(ctx, chat)
 	if err != nil {
 		return err
 	}
-	builder := s.sender.To(target.InputPeer).Upload(message.FromPath(path))
+	builder := topicBuilder(s.sender, target.InputPeer, messageThreadID).Upload(message.FromPath(path))
 	return s.performRPC(ctx, "send_photo", true, func(callCtx context.Context) error {
 		if strings.TrimSpace(caption) == "" {
 			_, err = builder.Photo(callCtx)
@@ -252,12 +257,36 @@ func (s *Session) SendPhoto(ctx context.Context, chat string, path string, capti
 	})
 }
 
-func (s *Session) SendDocument(ctx context.Context, chat string, path string, caption string) error {
+func (s *Session) SendPhotoGroup(ctx context.Context, chat string, messageThreadID int, paths []string, caption string) error {
 	target, err := s.resolveTarget(ctx, chat)
 	if err != nil {
 		return err
 	}
-	builder := s.sender.To(target.InputPeer).Upload(message.FromPath(path))
+	return s.performRPC(ctx, "send_photo_group", true, func(callCtx context.Context) error {
+		builder := topicBuilder(s.sender, target.InputPeer, messageThreadID)
+		media := make([]message.MultiMediaOption, 0, len(paths))
+		for _, path := range paths {
+			file, err := builder.Upload(message.FromPath(path)).AsInputFile(callCtx)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(caption) == "" {
+				media = append(media, message.UploadedPhoto(file))
+			} else {
+				media = append(media, message.UploadedPhoto(file, styling.Plain(caption)))
+			}
+		}
+		_, err := builder.Album(callCtx, media[0], media[1:]...)
+		return err
+	})
+}
+
+func (s *Session) SendDocument(ctx context.Context, chat string, messageThreadID int, path string, caption string) error {
+	target, err := s.resolveTarget(ctx, chat)
+	if err != nil {
+		return err
+	}
+	builder := topicBuilder(s.sender, target.InputPeer, messageThreadID).Upload(message.FromPath(path))
 	return s.performRPC(ctx, "send_document", true, func(callCtx context.Context) error {
 		if strings.TrimSpace(caption) == "" {
 			_, err = builder.File(callCtx)
@@ -268,29 +297,29 @@ func (s *Session) SendDocument(ctx context.Context, chat string, path string, ca
 	})
 }
 
-func (s *Session) SendVoice(ctx context.Context, chat string, path string) error {
+func (s *Session) SendVoice(ctx context.Context, chat string, messageThreadID int, path string) error {
 	target, err := s.resolveTarget(ctx, chat)
 	if err != nil {
 		return err
 	}
 	return s.performRPC(ctx, "send_voice", true, func(callCtx context.Context) error {
-		_, err := s.sender.To(target.InputPeer).Upload(message.FromPath(path)).Voice(callCtx)
+		_, err := topicBuilder(s.sender, target.InputPeer, messageThreadID).Upload(message.FromPath(path)).Voice(callCtx)
 		return err
 	})
 }
 
-func (s *Session) SendAudio(ctx context.Context, chat string, path string) error {
+func (s *Session) SendAudio(ctx context.Context, chat string, messageThreadID int, path string) error {
 	target, err := s.resolveTarget(ctx, chat)
 	if err != nil {
 		return err
 	}
 	return s.performRPC(ctx, "send_audio", true, func(callCtx context.Context) error {
-		_, err := s.sender.To(target.InputPeer).Upload(message.FromPath(path)).Audio(callCtx)
+		_, err := topicBuilder(s.sender, target.InputPeer, messageThreadID).Upload(message.FromPath(path)).Audio(callCtx)
 		return err
 	})
 }
 
-func (s *Session) ClickButton(ctx context.Context, chat string, messageID int, data []byte) error {
+func (s *Session) ClickButton(ctx context.Context, chat string, _ int, messageID int, data []byte) error {
 	target, err := s.resolveTarget(ctx, chat)
 	if err != nil {
 		return err
@@ -308,24 +337,19 @@ func (s *Session) ClickButton(ctx context.Context, chat string, messageID int, d
 	})
 }
 
-func (s *Session) SyncChat(ctx context.Context, chat string, limit int) (state.ChatState, error) {
+func (s *Session) SyncChat(ctx context.Context, chat string, messageThreadID int, limit int) (state.ChatState, error) {
 	target, err := s.resolveTarget(ctx, chat)
 	if err != nil {
 		return state.ChatState{}, err
 	}
 	var result tg.MessagesMessagesClass
-	err = s.performRPC(ctx, "sync_history", false, func(callCtx context.Context) error {
+	err = s.performRPC(ctx, syncOperation(messageThreadID), false, func(callCtx context.Context) error {
 		var callErr error
-		result, callErr = s.raw.MessagesGetHistory(callCtx, &tg.MessagesGetHistoryRequest{
-			Peer:       target.InputPeer,
-			OffsetID:   0,
-			OffsetDate: 0,
-			AddOffset:  0,
-			Limit:      limit,
-			MaxID:      0,
-			MinID:      0,
-			Hash:       0,
-		})
+		if messageThreadID > 0 {
+			result, callErr = s.raw.MessagesGetReplies(callCtx, topicRepliesRequest(target, messageThreadID, limit))
+		} else {
+			result, callErr = s.raw.MessagesGetHistory(callCtx, historyRequest(target, limit))
+		}
 		return callErr
 	})
 	if err != nil {
@@ -344,7 +368,7 @@ func (s *Session) SyncChat(ctx context.Context, chat string, limit int) (state.C
 			visible = append(visible, normalized)
 		}
 	}
-	pinned, err := s.lookupPinned(ctx, target, visible)
+	pinned, err := s.lookupPinned(ctx, target, messageThreadID, visible)
 	if err != nil {
 		return state.ChatState{}, err
 	}
@@ -358,13 +382,57 @@ func (s *Session) SyncChat(ctx context.Context, chat string, limit int) (state.C
 	}
 	sort.Slice(visible, func(i, j int) bool { return visible[i].ID < visible[j].ID })
 	return state.ChatState{
-		Target:     target.Raw,
-		ResolvedAs: target.Display,
-		PeerID:     target.PeerID,
-		SyncedAt:   time.Now().UTC(),
-		Messages:   visible,
-		Pinned:     pinned,
+		Target:          target.Raw,
+		ResolvedAs:      target.Display,
+		PeerID:          target.PeerID,
+		MessageThreadID: messageThreadID,
+		SyncedAt:        time.Now().UTC(),
+		Messages:        visible,
+		Pinned:          pinned,
 	}, nil
+}
+
+func topicBuilder(sender *message.Sender, inputPeer tg.InputPeerClass, messageThreadID int) *message.Builder {
+	requestBuilder := sender.To(inputPeer)
+	builder := &requestBuilder.Builder
+	if messageThreadID > 0 {
+		return builder.Reply(messageThreadID)
+	}
+	return builder
+}
+
+func syncOperation(messageThreadID int) string {
+	if messageThreadID > 0 {
+		return "sync_topic"
+	}
+	return "sync_history"
+}
+
+func historyRequest(target resolvedTarget, limit int) *tg.MessagesGetHistoryRequest {
+	return &tg.MessagesGetHistoryRequest{
+		Peer:       target.InputPeer,
+		OffsetID:   0,
+		OffsetDate: 0,
+		AddOffset:  0,
+		Limit:      limit,
+		MaxID:      0,
+		MinID:      0,
+		Hash:       0,
+	}
+}
+
+func topicRepliesRequest(target resolvedTarget, messageThreadID int, limit int) *tg.MessagesGetRepliesRequest {
+	return &tg.MessagesGetRepliesRequest{
+		Peer:       target.InputPeer,
+		MsgID:      messageThreadID,
+		OffsetID:   0,
+		OffsetDate: 0,
+		AddOffset:  0,
+		Limit:      limit,
+		MaxID:      0,
+		MinID:      0,
+		Hash:       0,
+	}
 }
 
 func (s *Session) resolveTarget(ctx context.Context, raw string) (resolvedTarget, error) {
@@ -498,7 +566,7 @@ func rpcTimeoutForOperation(operation string) time.Duration {
 	switch operation {
 	case "click_button":
 		return defaultClickRPCTimeout
-	case "send_photo", "send_document", "send_voice", "send_audio":
+	case "send_photo", "send_photo_group", "send_document", "send_voice", "send_audio":
 		return defaultMediaRPCTimeout
 	case "get_dialogs":
 		return defaultDialogRPCTimeout
@@ -1037,13 +1105,13 @@ func sentCodeTypeSummary(sentCode *tg.AuthSentCode) string {
 	}
 }
 
-func (s *Session) lookupPinned(ctx context.Context, target resolvedTarget, visible []state.VisibleMessage) (*state.PinnedMessage, error) {
+func (s *Session) lookupPinned(ctx context.Context, target resolvedTarget, messageThreadID int, visible []state.VisibleMessage) (*state.PinnedMessage, error) {
 	if pinned := pinnedFromVisible(visible); pinned != nil {
-		s.storePinnedCache(target.PeerID, pinned)
+		s.storePinnedCache(target.PeerID, messageThreadID, pinned)
 		return clonePinnedMessage(pinned), nil
 	}
 	if !visibleHasPinnedRefreshSignal(visible) {
-		if pinned, ok := s.loadPinnedCache(target.PeerID, time.Now()); ok {
+		if pinned, ok := s.loadPinnedCache(target.PeerID, messageThreadID, time.Now()); ok {
 			return pinned, nil
 		}
 	}
@@ -1051,12 +1119,7 @@ func (s *Session) lookupPinned(ctx context.Context, target resolvedTarget, visib
 	var result tg.MessagesMessagesClass
 	err := s.performRPC(ctx, "search_pinned", false, func(callCtx context.Context) error {
 		var callErr error
-		result, callErr = s.raw.MessagesSearch(callCtx, &tg.MessagesSearchRequest{
-			Peer:   target.InputPeer,
-			Q:      "",
-			Filter: &tg.InputMessagesFilterPinned{},
-			Limit:  10,
-		})
+		result, callErr = s.raw.MessagesSearch(callCtx, pinnedSearchRequest(target, messageThreadID))
 		return callErr
 	})
 	if err != nil {
@@ -1077,7 +1140,7 @@ func (s *Session) lookupPinned(ctx context.Context, target resolvedTarget, visib
 		}
 	}
 	if newest == nil {
-		s.storePinnedCache(target.PeerID, nil)
+		s.storePinnedCache(target.PeerID, messageThreadID, nil)
 		return nil, nil
 	}
 	pinned := &state.PinnedMessage{
@@ -1085,8 +1148,21 @@ func (s *Session) lookupPinned(ctx context.Context, target resolvedTarget, visib
 		Text:      newest.Text,
 		Buttons:   cloneButtons(newest.Buttons),
 	}
-	s.storePinnedCache(target.PeerID, pinned)
+	s.storePinnedCache(target.PeerID, messageThreadID, pinned)
 	return clonePinnedMessage(pinned), nil
+}
+
+func pinnedSearchRequest(target resolvedTarget, messageThreadID int) *tg.MessagesSearchRequest {
+	request := &tg.MessagesSearchRequest{
+		Peer:   target.InputPeer,
+		Q:      "",
+		Filter: &tg.InputMessagesFilterPinned{},
+		Limit:  10,
+	}
+	if messageThreadID > 0 {
+		request.SetTopMsgID(messageThreadID)
+	}
+	return request
 }
 
 func pinnedFromVisible(visible []state.VisibleMessage) *state.PinnedMessage {
@@ -1138,22 +1214,25 @@ func cloneButtons(buttons [][]state.InlineButton) [][]state.InlineButton {
 	return cloned
 }
 
-func (s *Session) loadPinnedCache(peerID int64, now time.Time) (*state.PinnedMessage, bool) {
+func (s *Session) loadPinnedCache(peerID int64, messageThreadID int, now time.Time) (*state.PinnedMessage, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	entry, ok := s.pinnedCache[peerID]
+	entry, ok := s.pinnedCache[pinnedCacheKey{peerID: peerID, messageThreadID: messageThreadID}]
 	if !ok || now.Sub(entry.fetchedAt) > s.effectivePinnedTTL() {
 		return nil, false
 	}
 	return clonePinnedMessage(entry.pinned), true
 }
 
-func (s *Session) storePinnedCache(peerID int64, pinned *state.PinnedMessage) {
+func (s *Session) storePinnedCache(peerID int64, messageThreadID int, pinned *state.PinnedMessage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.pinnedCache[peerID] = pinnedCacheEntry{
+	if s.pinnedCache == nil {
+		s.pinnedCache = map[pinnedCacheKey]pinnedCacheEntry{}
+	}
+	s.pinnedCache[pinnedCacheKey{peerID: peerID, messageThreadID: messageThreadID}] = pinnedCacheEntry{
 		pinned:    clonePinnedMessage(pinned),
 		fetchedAt: time.Now(),
 	}
@@ -1167,7 +1246,7 @@ func (s *Session) effectivePinnedTTL() time.Duration {
 }
 
 func (s *Session) loadAllDialogEntities(ctx context.Context) (peer.Entities, error) {
-	combined := peer.Entities{}
+	combined := peer.NewEntities(map[int64]*tg.User{}, map[int64]*tg.Chat{}, map[int64]*tg.Channel{})
 	offsetPeer := tg.InputPeerClass(&tg.InputPeerEmpty{})
 	offsetID := 0
 	offsetDate := 0

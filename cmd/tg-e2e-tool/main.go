@@ -99,6 +99,11 @@ func run(args []string, stdin, stdout, stderr *os.File) int {
 			return client.AuthStatus(ctx)
 		})
 		return 0
+	case "chats":
+		err = runChatsCommand(cfg, client, args[1:], stdout)
+		if err != nil {
+			return printError(stderr, 1, err)
+		}
 	case "login":
 		if err := withRuntimeLock(cfg, func() error {
 			return client.Login(context.Background(), stdin, stdout)
@@ -163,8 +168,9 @@ func run(args []string, stdin, stdout, stderr *os.File) int {
 }
 
 func printUsage(out io.Writer) {
-	fmt.Fprintln(out, "usage: tg-e2e-tool <help|doctor|login|interactive|fixtures|run-scenario|run-block|run-text-matrix|run-suite|rate-sweep|print-config> [path ...]")
+	fmt.Fprintln(out, "usage: tg-e2e-tool <help|doctor|chats|login|interactive|fixtures|run-scenario|run-block|run-text-matrix|run-suite|rate-sweep|print-config> [path ...]")
 	fmt.Fprintln(out, "the CLI auto-loads .env from the current working directory, with repo-root fallback")
+	fmt.Fprintln(out, "chats options: --groups --filter TrackMate --topics --admins --json")
 	fmt.Fprintln(out, "rate-sweep options: --chat @bot --runs 3 --artifact-root artifacts/rate-sweep --prepare-scenario path.jsonl --min-action-ms 1800 --max-action-ms 3000 --resolution-ms 100")
 }
 

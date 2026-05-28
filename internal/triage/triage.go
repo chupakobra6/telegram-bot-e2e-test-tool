@@ -684,25 +684,38 @@ func collectFinalButtons(snapshot *state.ChatState) []string {
 }
 
 func normalizeCommandTarget(cmd protocol.Command) string {
+	parts := make([]string, 0, 2)
+	if threadID := cmd.ThreadID(); threadID > 0 {
+		parts = append(parts, fmt.Sprintf("thread=%d", threadID))
+	}
+	var target string
 	switch cmd.Action {
 	case "send_text":
-		return "text=" + compactExcerpt(cmd.Text, messageExcerptLimit)
+		target = "text=" + compactExcerpt(cmd.Text, messageExcerptLimit)
+	case "send_photo_group":
+		target = fmt.Sprintf("paths=%d", len(cmd.Paths))
+		if cmd.Caption != "" {
+			target += " caption=" + compactExcerpt(cmd.Caption, messageExcerptLimit)
+		}
 	case "send_photo", "send_voice", "send_audio", "send_document":
-		return "path=" + compactExcerpt(cmd.Path, messageExcerptLimit)
+		target = "path=" + compactExcerpt(cmd.Path, messageExcerptLimit)
 	case "click_button":
-		target := "button=" + normalizeButtonLabel(cmd.ButtonText)
+		target = "button=" + normalizeButtonLabel(cmd.ButtonText)
+		if cmd.MessageText != "" {
+			target += " message_text=" + compactExcerpt(cmd.MessageText, messageExcerptLimit)
+		}
 		if cmd.MessageOffset > 0 {
 			target += fmt.Sprintf(" offset=%d", cmd.MessageOffset)
 		}
-		return target
 	case "wait":
 		if cmd.TimeoutMS > 0 {
-			return fmt.Sprintf("timeout_ms=%d", cmd.TimeoutMS)
+			target = fmt.Sprintf("timeout_ms=%d", cmd.TimeoutMS)
 		}
-		return ""
-	default:
-		return ""
 	}
+	if target != "" {
+		parts = append(parts, target)
+	}
+	return strings.Join(parts, " ")
 }
 
 func normalizeEventMessage(evt *protocol.Event) string {

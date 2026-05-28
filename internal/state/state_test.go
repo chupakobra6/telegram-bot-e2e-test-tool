@@ -1,6 +1,9 @@
 package state
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestDiff(t *testing.T) {
 	prev := ChatState{
@@ -34,5 +37,19 @@ func TestDiff(t *testing.T) {
 	}
 	if !diff.PinnedChanged {
 		t.Fatal("expected pinned change")
+	}
+}
+
+func TestChatStateIncludesMessageThreadID(t *testing.T) {
+	body, err := json.Marshal(ChatState{
+		Target:          "@group",
+		MessageThreadID: 123,
+		Messages:        []VisibleMessage{},
+	})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if string(body) != `{"target":"@group","message_thread_id":123,"synced_at":"0001-01-01T00:00:00Z","messages":[]}` {
+		t.Fatalf("unexpected JSON: %s", body)
 	}
 }

@@ -9,12 +9,13 @@ import (
 )
 
 type ChatState struct {
-	Target     string           `json:"target"`
-	ResolvedAs string           `json:"resolved_as,omitempty"`
-	PeerID     int64            `json:"peer_id,omitempty"`
-	SyncedAt   time.Time        `json:"synced_at"`
-	Messages   []VisibleMessage `json:"messages"`
-	Pinned     *PinnedMessage   `json:"pinned,omitempty"`
+	Target          string           `json:"target"`
+	ResolvedAs      string           `json:"resolved_as,omitempty"`
+	PeerID          int64            `json:"peer_id,omitempty"`
+	MessageThreadID int              `json:"message_thread_id,omitempty"`
+	SyncedAt        time.Time        `json:"synced_at"`
+	Messages        []VisibleMessage `json:"messages"`
+	Pinned          *PinnedMessage   `json:"pinned,omitempty"`
 }
 
 type VisibleMessage struct {

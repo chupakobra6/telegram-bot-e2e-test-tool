@@ -44,9 +44,9 @@ func TestVisibleHasPinnedRefreshSignal(t *testing.T) {
 func TestPinnedCacheExpires(t *testing.T) {
 	s := &Session{
 		pinnedTTL:   5 * time.Second,
-		pinnedCache: map[int64]pinnedCacheEntry{},
+		pinnedCache: map[pinnedCacheKey]pinnedCacheEntry{},
 	}
-	s.storePinnedCache(42, &state.PinnedMessage{
+	s.storePinnedCache(42, 123, &state.PinnedMessage{
 		MessageID: 7,
 		Text:      "dashboard",
 		Buttons: [][]state.InlineButton{{
@@ -54,15 +54,18 @@ func TestPinnedCacheExpires(t *testing.T) {
 		}},
 	})
 
-	pinned, ok := s.loadPinnedCache(42, time.Now())
+	pinned, ok := s.loadPinnedCache(42, 123, time.Now())
 	if !ok || pinned == nil || pinned.MessageID != 7 {
 		t.Fatalf("expected fresh pinned cache entry, got pinned=%+v ok=%t", pinned, ok)
 	}
 	if len(pinned.Buttons) != 1 || pinned.Buttons[0][0].Text != "⚙️ Настройки" {
 		t.Fatalf("expected pinned cache buttons to round-trip, got %+v", pinned.Buttons)
 	}
+	if pinned, ok := s.loadPinnedCache(42, 456, time.Now()); ok || pinned != nil {
+		t.Fatalf("expected different topic cache miss, got pinned=%+v ok=%t", pinned, ok)
+	}
 
-	s.pinnedCache[42] = pinnedCacheEntry{
+	s.pinnedCache[pinnedCacheKey{peerID: 42, messageThreadID: 123}] = pinnedCacheEntry{
 		pinned: &state.PinnedMessage{
 			MessageID: 7,
 			Text:      "dashboard",
@@ -72,7 +75,7 @@ func TestPinnedCacheExpires(t *testing.T) {
 		},
 		fetchedAt: time.Now().Add(-s.pinnedTTL - time.Second),
 	}
-	if pinned, ok := s.loadPinnedCache(42, time.Now()); ok || pinned != nil {
+	if pinned, ok := s.loadPinnedCache(42, 123, time.Now()); ok || pinned != nil {
 		t.Fatalf("expected expired cache miss, got pinned=%+v ok=%t", pinned, ok)
 	}
 }

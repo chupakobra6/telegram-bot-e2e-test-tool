@@ -112,6 +112,30 @@ func TestReadWithOptionsResolvesFixturePlaceholder(t *testing.T) {
 	}
 }
 
+func TestReadWithOptionsResolvesFixturePlaceholdersInPhotoGroup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scenario.jsonl")
+	body := []byte("{\"id\":\"album\",\"action\":\"send_photo_group\",\"paths\":[\"@fixtures/e2e-photo.png\",\"@fixtures/e2e-receipt.png\"]}\n")
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("write scenario: %v", err)
+	}
+
+	var got protocol.Command
+	if err := ReadWithOptions(path, ReadOptions{FixtureDir: "/tmp/fixtures"}, func(cmd protocol.Command) error {
+		got = cmd
+		return nil
+	}); err != nil {
+		t.Fatalf("read scenario: %v", err)
+	}
+	want := []string{
+		filepath.Join("/tmp/fixtures", "e2e-photo.png"),
+		filepath.Join("/tmp/fixtures", "e2e-receipt.png"),
+	}
+	if len(got.Paths) != len(want) || got.Paths[0] != want[0] || got.Paths[1] != want[1] {
+		t.Fatalf("expected fixture paths to be resolved, got %q", got.Paths)
+	}
+}
+
 func TestUsesChatPlaceholder(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "scenario.jsonl")

@@ -57,6 +57,7 @@ Example commands:
 ```json
 {"id":"select","action":"select_chat","chat":"@your_bot_username"}
 {"id":"start","action":"send_text","text":"/start"}
+{"id":"open","action":"click_button","button_text":"Open","message_text":"Expected card text"}
 ```
 
 ## 5. Run one scenario
@@ -121,6 +122,7 @@ External product repos can reference tool-owned fixtures directly inside scenari
 
 ```json
 {"id":"photo","action":"send_photo","path":"@fixtures/e2e-photo.png"}
+{"id":"album","action":"send_photo_group","paths":["@fixtures/e2e-photo.png","@fixtures/e2e-receipt.png"],"caption":"общая подпись"}
 ```
 
 ## 8. Run a text matrix

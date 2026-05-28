@@ -46,6 +46,7 @@ make setup
 make test
 make doctor
 make login
+make chats CHAT_GROUPS=1 CHAT_FILTER=TrackMate CHAT_TOPICS=1 CHAT_ADMINS=1
 make interactive
 make run-scenario SCENARIO=examples/suite/03-text-fast-path-complete.jsonl CHAT=@your_bot_username
 make run-text-matrix CHAT=@your_bot_username CASES=/absolute/path/to/cases.txt
@@ -64,6 +65,7 @@ Supported actions:
 - `select_chat`
 - `send_text`
 - `send_photo`
+- `send_photo_group`
 - `send_voice`
 - `send_audio`
 - `send_document`
@@ -72,6 +74,19 @@ Supported actions:
 - `dump_state`
 
 Interactive mode and saved scenarios use the same command contract and the same execution path.
+
+For Telegram forum groups, commands can target a topic by passing the numeric topic starter ID as either `message_thread_id` or its short alias `topic`. A `select_chat` with a topic keeps that topic selected for following commands until another chat or topic is selected. Scenarios without a topic continue to target the normal chat history.
+
+Use `tg-e2e-tool chats --groups --filter TrackMate --topics --admins` to find the MTProto target id, forum topic ids, and bot admin topic-management rights for scenario files. The `target=` value is the chat value accepted by `select_chat`; `topic_id=` is the value accepted by `message_thread_id`/`topic`.
+
+For noisy chats with repeated inline buttons, `click_button` can be scoped with `message_text`. The button is clicked only on a visible message whose text contains that fragment.
+
+```json
+{"id":"select","action":"select_chat","chat":"@your_forum_group","message_thread_id":12345}
+{"id":"start","action":"send_text","text":"/start"}
+{"id":"open_report","action":"click_button","button_text":"🏁 Report","message_text":"Task title"}
+{"id":"wait","action":"wait","timeout_ms":15000}
+```
 
 ## Bundled Shelfy suite
 
@@ -156,4 +171,6 @@ Recommended triage order:
 - The tool is intentionally user-like: no Bot API shortcuts and no test-only bot backdoors.
 - The bundled scenarios keep an explicit `select_chat` step and use the placeholder `@your_bot_username`; `run-scenario`, `run-suite`, and `rate-sweep` materialize it from `CHAT=@your_bot_username`.
 - Relative media paths resolve relative to the scenario file. Paths starting with `@fixtures/` resolve to the tool-owned `artifacts/fixtures/` directory.
+- `send_photo_group` sends one Telegram album/media group with 2-10 photo paths and one caption applied to every item:
+  `{"id":"album","action":"send_photo_group","paths":["@fixtures/e2e-photo.png","@fixtures/e2e-receipt.png"],"caption":"общая подпись"}`
 - Do not run `login`, `interactive`, `run-scenario`, `run-block`, `run-text-matrix`, or `rate-sweep` in parallel with the same Telegram account.

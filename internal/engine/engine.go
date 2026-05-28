@@ -16,13 +16,14 @@ import (
 )
 
 type Transport interface {
-	SendText(ctx context.Context, chat string, text string) error
-	SendPhoto(ctx context.Context, chat string, path string, caption string) error
-	SendDocument(ctx context.Context, chat string, path string, caption string) error
-	SendVoice(ctx context.Context, chat string, path string) error
-	SendAudio(ctx context.Context, chat string, path string) error
-	ClickButton(ctx context.Context, chat string, messageID int, data []byte) error
-	SyncChat(ctx context.Context, chat string, limit int) (state.ChatState, error)
+	SendText(ctx context.Context, chat string, messageThreadID int, text string) error
+	SendPhoto(ctx context.Context, chat string, messageThreadID int, path string, caption string) error
+	SendPhotoGroup(ctx context.Context, chat string, messageThreadID int, paths []string, caption string) error
+	SendDocument(ctx context.Context, chat string, messageThreadID int, path string, caption string) error
+	SendVoice(ctx context.Context, chat string, messageThreadID int, path string) error
+	SendAudio(ctx context.Context, chat string, messageThreadID int, path string) error
+	ClickButton(ctx context.Context, chat string, messageThreadID int, messageID int, data []byte) error
+	SyncChat(ctx context.Context, chat string, messageThreadID int, limit int) (state.ChatState, error)
 }
 
 type Engine struct {
@@ -32,15 +33,19 @@ type Engine struct {
 	historyWindow int
 	syncInterval  time.Duration
 
-	currentChat string
-	lastState   *state.ChatState
-	pendingWait *pendingVisibleChange
+	currentChat     string
+	currentThreadID int
+	lastState       *state.ChatState
+	lastStateChat   string
+	lastStateThread int
+	pendingWait     *pendingVisibleChange
 }
 
 type pendingVisibleChange struct {
-	chat     string
-	snapshot state.ChatState
-	diff     state.ChatDiff
+	chat            string
+	messageThreadID int
+	snapshot        state.ChatState
+	diff            state.ChatDiff
 }
 
 func New(transport Transport, tr *transcript.Transcript, out io.Writer, historyWindow int, syncInterval time.Duration) *Engine {
@@ -58,120 +63,129 @@ func (e *Engine) Execute(ctx context.Context, cmd protocol.Command) error {
 	if cmd.Action != "wait" {
 		e.pendingWait = nil
 	}
-	chat, err := e.resolveChat(cmd)
+	chat, messageThreadID, err := e.resolveTarget(cmd)
 	if err != nil {
-		return e.emitError(cmd, chat, err)
+		return e.emitError(cmd, chat, messageThreadID, err)
 	}
 
 	switch cmd.Action {
 	case "select_chat":
-		return e.selectChat(ctx, cmd, chat)
+		return e.selectChat(ctx, cmd, chat, messageThreadID)
 	case "send_text":
-		if err := e.prepareActionBaseline(ctx, chat); err != nil {
-			return e.emitError(cmd, chat, err)
+		if err := e.prepareActionBaseline(ctx, chat, messageThreadID); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		if err := e.transport.SendText(ctx, chat, cmd.Text); err != nil {
-			return e.emitError(cmd, chat, err)
+		if err := e.transport.SendText(ctx, chat, messageThreadID, cmd.Text); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		return e.emitAckAndSync(ctx, cmd, chat)
+		return e.emitAckAndSync(ctx, cmd, chat, messageThreadID)
 	case "send_photo":
-		if err := e.prepareActionBaseline(ctx, chat); err != nil {
-			return e.emitError(cmd, chat, err)
+		if err := e.prepareActionBaseline(ctx, chat, messageThreadID); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		if err := e.transport.SendPhoto(ctx, chat, cmd.Path, cmd.Caption); err != nil {
-			return e.emitError(cmd, chat, err)
+		if err := e.transport.SendPhoto(ctx, chat, messageThreadID, cmd.Path, cmd.Caption); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		return e.emitAckAndSync(ctx, cmd, chat)
+		return e.emitAckAndSync(ctx, cmd, chat, messageThreadID)
+	case "send_photo_group":
+		if err := e.prepareActionBaseline(ctx, chat, messageThreadID); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
+		}
+		if err := e.transport.SendPhotoGroup(ctx, chat, messageThreadID, cmd.Paths, cmd.Caption); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
+		}
+		return e.emitAckAndSync(ctx, cmd, chat, messageThreadID)
 	case "send_document":
-		if err := e.prepareActionBaseline(ctx, chat); err != nil {
-			return e.emitError(cmd, chat, err)
+		if err := e.prepareActionBaseline(ctx, chat, messageThreadID); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		if err := e.transport.SendDocument(ctx, chat, cmd.Path, cmd.Caption); err != nil {
-			return e.emitError(cmd, chat, err)
+		if err := e.transport.SendDocument(ctx, chat, messageThreadID, cmd.Path, cmd.Caption); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		return e.emitAckAndSync(ctx, cmd, chat)
+		return e.emitAckAndSync(ctx, cmd, chat, messageThreadID)
 	case "send_voice":
-		if err := e.prepareActionBaseline(ctx, chat); err != nil {
-			return e.emitError(cmd, chat, err)
+		if err := e.prepareActionBaseline(ctx, chat, messageThreadID); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		if err := e.transport.SendVoice(ctx, chat, cmd.Path); err != nil {
-			return e.emitError(cmd, chat, err)
+		if err := e.transport.SendVoice(ctx, chat, messageThreadID, cmd.Path); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		return e.emitAckAndSync(ctx, cmd, chat)
+		return e.emitAckAndSync(ctx, cmd, chat, messageThreadID)
 	case "send_audio":
-		if err := e.prepareActionBaseline(ctx, chat); err != nil {
-			return e.emitError(cmd, chat, err)
+		if err := e.prepareActionBaseline(ctx, chat, messageThreadID); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		if err := e.transport.SendAudio(ctx, chat, cmd.Path); err != nil {
-			return e.emitError(cmd, chat, err)
+		if err := e.transport.SendAudio(ctx, chat, messageThreadID, cmd.Path); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		return e.emitAckAndSync(ctx, cmd, chat)
+		return e.emitAckAndSync(ctx, cmd, chat, messageThreadID)
 	case "click_button":
-		if err := e.executeClick(ctx, cmd, chat); err != nil {
-			return e.emitError(cmd, chat, err)
+		if err := e.executeClick(ctx, cmd, chat, messageThreadID); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		return e.emitAckAndSync(ctx, cmd, chat)
+		return e.emitAckAndSync(ctx, cmd, chat, messageThreadID)
 	case "dump_state":
-		snapshot, err := e.sync(ctx, chat)
+		snapshot, err := e.sync(ctx, chat, messageThreadID)
 		if err != nil {
-			return e.emitError(cmd, chat, err)
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		e.lastState = &snapshot
+		e.setLastState(chat, messageThreadID, snapshot)
 		return e.emit(protocol.Event{
-			Type:      "state_snapshot",
-			CommandID: cmd.ID,
-			Action:    cmd.Action,
-			Chat:      chat,
-			OK:        true,
-			Message:   "chat snapshot captured",
-			Snapshot:  &snapshot,
+			Type:            "state_snapshot",
+			CommandID:       cmd.ID,
+			Action:          cmd.Action,
+			Chat:            chat,
+			MessageThreadID: messageThreadID,
+			OK:              true,
+			Message:         "chat snapshot captured",
+			Snapshot:        &snapshot,
 		})
 	case "wait":
-		return e.executeWait(ctx, cmd, chat)
+		return e.executeWait(ctx, cmd, chat, messageThreadID)
 	default:
-		return e.emitError(cmd, chat, fmt.Errorf("unsupported action %q", cmd.Action))
+		return e.emitError(cmd, chat, messageThreadID, fmt.Errorf("unsupported action %q", cmd.Action))
 	}
 }
 
-func (e *Engine) executeClick(ctx context.Context, cmd protocol.Command, chat string) error {
-	snapshot, err := e.sync(ctx, chat)
+func (e *Engine) executeClick(ctx context.Context, cmd protocol.Command, chat string, messageThreadID int) error {
+	snapshot, err := e.sync(ctx, chat, messageThreadID)
 	if err != nil {
 		return err
 	}
-	e.lastState = &snapshot
-	e.currentChat = chat
-	messageID, callbackData, err := findButton(snapshot, cmd.ButtonText, cmd.MessageOffset)
+	e.setLastState(chat, messageThreadID, snapshot)
+	e.setCurrentTarget(chat, messageThreadID)
+	messageID, callbackData, err := findButton(snapshot, cmd.ButtonText, cmd.MessageOffset, cmd.MessageText)
 	if err != nil {
 		if cmd.MessageOffset != 0 {
 			return err
 		}
-		messageID, callbackData, snapshot, err = e.waitForClickableButton(ctx, chat, cmd, snapshot)
+		messageID, callbackData, snapshot, err = e.waitForClickableButton(ctx, chat, messageThreadID, cmd, snapshot)
 		if err != nil {
 			return err
 		}
-		e.lastState = &snapshot
-		e.currentChat = chat
+		e.setLastState(chat, messageThreadID, snapshot)
+		e.setCurrentTarget(chat, messageThreadID)
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		data, err := base64.StdEncoding.DecodeString(callbackData)
 		if err != nil {
 			return fmt.Errorf("decode callback data: %w", err)
 		}
-		if err := e.transport.ClickButton(ctx, chat, messageID, data); err != nil {
+		if err := e.transport.ClickButton(ctx, chat, messageThreadID, messageID, data); err != nil {
 			if !isClickDispatchAmbiguous(err) {
 				return err
 			}
-			if err := e.waitForPostClickVisibleChange(ctx, chat, cmd, snapshot); err == nil {
+			if err := e.waitForPostClickVisibleChange(ctx, chat, messageThreadID, cmd, snapshot); err == nil {
 				return nil
 			}
 			if attempt == 0 {
-				retryMessageID, retryCallbackData, retrySnapshot, retryErr := e.resolveRetryableButton(ctx, chat, cmd, snapshot)
+				retryMessageID, retryCallbackData, retrySnapshot, retryErr := e.resolveRetryableButton(ctx, chat, messageThreadID, cmd, snapshot)
 				if retryErr == nil {
 					messageID = retryMessageID
 					callbackData = retryCallbackData
 					snapshot = retrySnapshot
-					e.lastState = &snapshot
-					e.currentChat = chat
+					e.setLastState(chat, messageThreadID, snapshot)
+					e.setCurrentTarget(chat, messageThreadID)
 					continue
 				}
 			}
@@ -182,27 +196,28 @@ func (e *Engine) executeClick(ctx context.Context, cmd protocol.Command, chat st
 	return nil
 }
 
-func (e *Engine) prepareActionBaseline(ctx context.Context, chat string) error {
-	if e.lastState != nil && e.currentChat == chat {
+func (e *Engine) prepareActionBaseline(ctx context.Context, chat string, messageThreadID int) error {
+	if e.hasLastStateFor(chat, messageThreadID) {
 		return nil
 	}
-	snapshot, err := e.sync(ctx, chat)
+	snapshot, err := e.sync(ctx, chat, messageThreadID)
 	if err != nil {
 		return err
 	}
-	e.lastState = &snapshot
-	e.currentChat = chat
+	e.setLastState(chat, messageThreadID, snapshot)
+	e.setCurrentTarget(chat, messageThreadID)
 	return nil
 }
 
-func (e *Engine) executeWait(ctx context.Context, cmd protocol.Command, chat string) error {
+func (e *Engine) executeWait(ctx context.Context, cmd protocol.Command, chat string, messageThreadID int) error {
 	if err := e.emit(protocol.Event{
-		Type:      "ack",
-		CommandID: cmd.ID,
-		Action:    cmd.Action,
-		Chat:      chat,
-		OK:        true,
-		Message:   "waiting for visible chat changes",
+		Type:            "ack",
+		CommandID:       cmd.ID,
+		Action:          cmd.Action,
+		Chat:            chat,
+		MessageThreadID: messageThreadID,
+		OK:              true,
+		Message:         "waiting for visible chat changes",
 	}); err != nil {
 		return err
 	}
@@ -212,34 +227,35 @@ func (e *Engine) executeWait(ctx context.Context, cmd protocol.Command, chat str
 		timeout = 30 * time.Second
 	}
 
-	if e.pendingWait != nil && e.pendingWait.chat == chat {
+	if e.pendingWait != nil && e.pendingWait.chat == chat && e.pendingWait.messageThreadID == messageThreadID {
 		pending := e.pendingWait
 		e.pendingWait = nil
-		e.lastState = &pending.snapshot
-		e.currentChat = chat
+		e.setLastState(chat, messageThreadID, pending.snapshot)
+		e.setCurrentTarget(chat, messageThreadID)
 		if pending.diff.HasChanges() {
 			return e.emit(protocol.Event{
-				Type:      "state_update",
-				CommandID: cmd.ID,
-				Action:    cmd.Action,
-				Chat:      chat,
-				OK:        true,
-				Message:   "visible chat state already changed after previous action",
-				Snapshot:  &pending.snapshot,
-				Diff:      &pending.diff,
+				Type:            "state_update",
+				CommandID:       cmd.ID,
+				Action:          cmd.Action,
+				Chat:            chat,
+				MessageThreadID: messageThreadID,
+				OK:              true,
+				Message:         "visible chat state already changed after previous action",
+				Snapshot:        &pending.snapshot,
+				Diff:            &pending.diff,
 			})
 		}
 	}
 
 	var baseline state.ChatState
-	if e.lastState != nil && e.currentChat == chat {
+	if e.hasLastStateFor(chat, messageThreadID) {
 		baseline = *e.lastState
 	} else {
-		snapshot, err := e.sync(ctx, chat)
+		snapshot, err := e.sync(ctx, chat, messageThreadID)
 		if err != nil {
-			return e.emitError(cmd, chat, err)
+			return e.emitError(cmd, chat, messageThreadID, err)
 		}
-		e.lastState = &snapshot
+		e.setLastState(chat, messageThreadID, snapshot)
 		baseline = snapshot
 	}
 
@@ -251,114 +267,121 @@ func (e *Engine) executeWait(ctx context.Context, cmd protocol.Command, chat str
 	for {
 		select {
 		case <-ctx.Done():
-			return e.emitError(cmd, chat, ctx.Err())
+			return e.emitError(cmd, chat, messageThreadID, ctx.Err())
 		case <-deadline.C:
 			timeoutErr := fmt.Errorf("wait timeout after %s", timeout)
 			if err := e.emit(protocol.Event{
-				Type:      "timeout",
-				CommandID: cmd.ID,
-				Action:    cmd.Action,
-				Chat:      chat,
-				Error:     timeoutErr.Error(),
-				Snapshot:  &baseline,
+				Type:            "timeout",
+				CommandID:       cmd.ID,
+				Action:          cmd.Action,
+				Chat:            chat,
+				MessageThreadID: messageThreadID,
+				Error:           timeoutErr.Error(),
+				Snapshot:        &baseline,
 			}); err != nil {
 				return err
 			}
 			return timeoutErr
 		case <-ticker.C:
-			snapshot, err := e.transport.SyncChat(ctx, chat, e.historyWindow)
+			snapshot, err := e.transport.SyncChat(ctx, chat, messageThreadID, e.historyWindow)
 			if err != nil {
-				return e.emitError(cmd, chat, err)
+				return e.emitError(cmd, chat, messageThreadID, err)
 			}
 			diff := state.Diff(baseline, snapshot)
 			if !diff.HasChanges() {
 				continue
 			}
 			if !isWaitRelevantChange(baseline, snapshot, diff) {
-				e.lastState = &snapshot
-				e.currentChat = chat
+				e.setLastState(chat, messageThreadID, snapshot)
+				e.setCurrentTarget(chat, messageThreadID)
 				baseline = snapshot
 				continue
 			}
-			e.lastState = &snapshot
-			e.currentChat = chat
+			e.setLastState(chat, messageThreadID, snapshot)
+			e.setCurrentTarget(chat, messageThreadID)
 			return e.emit(protocol.Event{
-				Type:      "state_update",
-				CommandID: cmd.ID,
-				Action:    cmd.Action,
-				Chat:      chat,
-				OK:        true,
-				Message:   "visible chat state changed",
-				Snapshot:  &snapshot,
-				Diff:      &diff,
+				Type:            "state_update",
+				CommandID:       cmd.ID,
+				Action:          cmd.Action,
+				Chat:            chat,
+				MessageThreadID: messageThreadID,
+				OK:              true,
+				Message:         "visible chat state changed",
+				Snapshot:        &snapshot,
+				Diff:            &diff,
 			})
 		}
 	}
 }
 
-func (e *Engine) emitAckAndSync(ctx context.Context, cmd protocol.Command, chat string) error {
+func (e *Engine) emitAckAndSync(ctx context.Context, cmd protocol.Command, chat string, messageThreadID int) error {
 	if err := e.emit(protocol.Event{
-		Type:      "ack",
-		CommandID: cmd.ID,
-		Action:    cmd.Action,
-		Chat:      chat,
-		OK:        true,
-		Message:   "command executed",
+		Type:            "ack",
+		CommandID:       cmd.ID,
+		Action:          cmd.Action,
+		Chat:            chat,
+		MessageThreadID: messageThreadID,
+		OK:              true,
+		Message:         "command executed",
 	}); err != nil {
 		return err
 	}
 
-	snapshot, err := e.sync(ctx, chat)
+	snapshot, err := e.sync(ctx, chat, messageThreadID)
 	if err != nil {
-		return e.emitError(cmd, chat, err)
+		return e.emitError(cmd, chat, messageThreadID, err)
 	}
-	if e.lastState == nil {
-		e.lastState = &snapshot
+	if !e.hasLastStateFor(chat, messageThreadID) {
+		e.setLastState(chat, messageThreadID, snapshot)
 		return e.emit(protocol.Event{
-			Type:      "state_snapshot",
-			CommandID: cmd.ID,
-			Action:    cmd.Action,
-			Chat:      chat,
-			OK:        true,
-			Message:   "chat snapshot captured",
-			Snapshot:  &snapshot,
+			Type:            "state_snapshot",
+			CommandID:       cmd.ID,
+			Action:          cmd.Action,
+			Chat:            chat,
+			MessageThreadID: messageThreadID,
+			OK:              true,
+			Message:         "chat snapshot captured",
+			Snapshot:        &snapshot,
 		})
 	}
 
 	previous := *e.lastState
 	diff := state.Diff(previous, snapshot)
-	e.lastState = &snapshot
+	e.setLastState(chat, messageThreadID, snapshot)
 	if diff.HasChanges() {
 		if shouldStorePendingWait(previous, snapshot, diff) {
 			e.pendingWait = &pendingVisibleChange{
-				chat:     chat,
-				snapshot: snapshot,
-				diff:     diff,
+				chat:            chat,
+				messageThreadID: messageThreadID,
+				snapshot:        snapshot,
+				diff:            diff,
 			}
 		}
 		return e.emit(protocol.Event{
-			Type:      "state_update",
-			CommandID: cmd.ID,
-			Action:    cmd.Action,
-			Chat:      chat,
-			OK:        true,
-			Message:   "visible chat state changed",
-			Snapshot:  &snapshot,
-			Diff:      &diff,
+			Type:            "state_update",
+			CommandID:       cmd.ID,
+			Action:          cmd.Action,
+			Chat:            chat,
+			MessageThreadID: messageThreadID,
+			OK:              true,
+			Message:         "visible chat state changed",
+			Snapshot:        &snapshot,
+			Diff:            &diff,
 		})
 	}
 	return e.emit(protocol.Event{
-		Type:      "state_snapshot",
-		CommandID: cmd.ID,
-		Action:    cmd.Action,
-		Chat:      chat,
-		OK:        true,
-		Message:   "visible chat state unchanged",
-		Snapshot:  &snapshot,
+		Type:            "state_snapshot",
+		CommandID:       cmd.ID,
+		Action:          cmd.Action,
+		Chat:            chat,
+		MessageThreadID: messageThreadID,
+		OK:              true,
+		Message:         "visible chat state unchanged",
+		Snapshot:        &snapshot,
 	})
 }
 
-func (e *Engine) waitForClickableButton(ctx context.Context, chat string, cmd protocol.Command, baseline state.ChatState) (int, string, state.ChatState, error) {
+func (e *Engine) waitForClickableButton(ctx context.Context, chat string, messageThreadID int, cmd protocol.Command, baseline state.ChatState) (int, string, state.ChatState, error) {
 	baselineInteractive, _ := latestInteractiveMessage(baseline)
 	timeout := time.Duration(cmd.TimeoutMS) * time.Millisecond
 	if timeout <= 0 {
@@ -377,7 +400,7 @@ func (e *Engine) waitForClickableButton(ctx context.Context, chat string, cmd pr
 		case <-deadline.C:
 			return 0, "", state.ChatState{}, fmt.Errorf("button %q did not appear within %s", cmd.ButtonText, timeout)
 		case <-ticker.C:
-			snapshot, err := e.transport.SyncChat(ctx, chat, e.historyWindow)
+			snapshot, err := e.transport.SyncChat(ctx, chat, messageThreadID, e.historyWindow)
 			if err != nil {
 				return 0, "", state.ChatState{}, err
 			}
@@ -388,7 +411,7 @@ func (e *Engine) waitForClickableButton(ctx context.Context, chat string, cmd pr
 			if baselineInteractive.ID == currentInteractive.ID && baselineInteractive.Text == currentInteractive.Text && buttonsEqual(baselineInteractive.Buttons, currentInteractive.Buttons) {
 				continue
 			}
-			messageID, callbackData, err := findButton(snapshot, cmd.ButtonText, 0)
+			messageID, callbackData, err := findButton(snapshot, cmd.ButtonText, 0, cmd.MessageText)
 			if err != nil {
 				baselineInteractive = currentInteractive
 				continue
@@ -398,7 +421,7 @@ func (e *Engine) waitForClickableButton(ctx context.Context, chat string, cmd pr
 	}
 }
 
-func (e *Engine) waitForPostClickVisibleChange(ctx context.Context, chat string, cmd protocol.Command, baseline state.ChatState) error {
+func (e *Engine) waitForPostClickVisibleChange(ctx context.Context, chat string, messageThreadID int, cmd protocol.Command, baseline state.ChatState) error {
 	timeout := time.Duration(cmd.TimeoutMS) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 15 * time.Second
@@ -416,7 +439,7 @@ func (e *Engine) waitForPostClickVisibleChange(ctx context.Context, chat string,
 		case <-deadline.C:
 			return fmt.Errorf("no visible change after %s", timeout)
 		case <-ticker.C:
-			snapshot, err := e.transport.SyncChat(ctx, chat, e.historyWindow)
+			snapshot, err := e.transport.SyncChat(ctx, chat, messageThreadID, e.historyWindow)
 			if err != nil {
 				return err
 			}
@@ -429,8 +452,8 @@ func (e *Engine) waitForPostClickVisibleChange(ctx context.Context, chat string,
 	}
 }
 
-func (e *Engine) resolveRetryableButton(ctx context.Context, chat string, cmd protocol.Command, baseline state.ChatState) (int, string, state.ChatState, error) {
-	snapshot, err := e.transport.SyncChat(ctx, chat, e.historyWindow)
+func (e *Engine) resolveRetryableButton(ctx context.Context, chat string, messageThreadID int, cmd protocol.Command, baseline state.ChatState) (int, string, state.ChatState, error) {
+	snapshot, err := e.transport.SyncChat(ctx, chat, messageThreadID, e.historyWindow)
 	if err != nil {
 		return 0, "", state.ChatState{}, err
 	}
@@ -438,7 +461,7 @@ func (e *Engine) resolveRetryableButton(ctx context.Context, chat string, cmd pr
 		return 0, "", state.ChatState{}, fmt.Errorf("visible state already changed")
 	}
 
-	messageID, callbackData, err := findButton(snapshot, cmd.ButtonText, cmd.MessageOffset)
+	messageID, callbackData, err := findButton(snapshot, cmd.ButtonText, cmd.MessageOffset, cmd.MessageText)
 	if err != nil {
 		return 0, "", state.ChatState{}, err
 	}
@@ -534,63 +557,89 @@ func isPureSelfOutgoing(msg state.VisibleMessage) bool {
 	return msg.Outgoing && msg.Sender == "self"
 }
 
-func (e *Engine) selectChat(ctx context.Context, cmd protocol.Command, chat string) error {
+func (e *Engine) selectChat(ctx context.Context, cmd protocol.Command, chat string, messageThreadID int) error {
 	e.pendingWait = nil
 	if err := e.emit(protocol.Event{
-		Type:      "ack",
-		CommandID: cmd.ID,
-		Action:    cmd.Action,
-		Chat:      chat,
-		OK:        true,
-		Message:   "chat selected",
+		Type:            "ack",
+		CommandID:       cmd.ID,
+		Action:          cmd.Action,
+		Chat:            chat,
+		MessageThreadID: messageThreadID,
+		OK:              true,
+		Message:         "chat selected",
 	}); err != nil {
 		return err
 	}
 
-	snapshot, err := e.sync(ctx, chat)
+	snapshot, err := e.sync(ctx, chat, messageThreadID)
 	if err != nil {
-		return e.emitError(cmd, chat, err)
+		return e.emitError(cmd, chat, messageThreadID, err)
 	}
-	e.lastState = &snapshot
-	e.currentChat = chat
+	e.setLastState(chat, messageThreadID, snapshot)
+	e.setCurrentTarget(chat, messageThreadID)
 	return e.emit(protocol.Event{
-		Type:      "state_snapshot",
-		CommandID: cmd.ID,
-		Action:    cmd.Action,
-		Chat:      chat,
-		OK:        true,
-		Message:   "chat snapshot captured",
-		Snapshot:  &snapshot,
+		Type:            "state_snapshot",
+		CommandID:       cmd.ID,
+		Action:          cmd.Action,
+		Chat:            chat,
+		MessageThreadID: messageThreadID,
+		OK:              true,
+		Message:         "chat snapshot captured",
+		Snapshot:        &snapshot,
 	})
 }
 
-func (e *Engine) sync(ctx context.Context, chat string) (state.ChatState, error) {
-	snapshot, err := e.transport.SyncChat(ctx, chat, e.historyWindow)
+func (e *Engine) sync(ctx context.Context, chat string, messageThreadID int) (state.ChatState, error) {
+	snapshot, err := e.transport.SyncChat(ctx, chat, messageThreadID, e.historyWindow)
 	if err != nil {
 		return state.ChatState{}, err
 	}
-	e.currentChat = chat
+	e.setCurrentTarget(chat, messageThreadID)
 	return snapshot, nil
 }
 
-func (e *Engine) resolveChat(cmd protocol.Command) (string, error) {
+func (e *Engine) resolveTarget(cmd protocol.Command) (string, int, error) {
 	if strings.TrimSpace(cmd.Chat) != "" {
-		e.currentChat = strings.TrimSpace(cmd.Chat)
-		return e.currentChat, nil
+		chat := strings.TrimSpace(cmd.Chat)
+		messageThreadID := 0
+		if cmd.HasThreadID() {
+			messageThreadID = cmd.ThreadID()
+		}
+		e.setCurrentTarget(chat, messageThreadID)
+		return chat, messageThreadID, nil
 	}
 	if e.currentChat != "" {
-		return e.currentChat, nil
+		if cmd.HasThreadID() {
+			e.currentThreadID = cmd.ThreadID()
+		}
+		return e.currentChat, e.currentThreadID, nil
 	}
-	return "", fmt.Errorf("chat is required for %s; use select_chat first or pass chat explicitly", cmd.Action)
+	return "", 0, fmt.Errorf("chat is required for %s; use select_chat first or pass chat explicitly", cmd.Action)
 }
 
-func (e *Engine) emitError(cmd protocol.Command, chat string, err error) error {
+func (e *Engine) setCurrentTarget(chat string, messageThreadID int) {
+	e.currentChat = chat
+	e.currentThreadID = messageThreadID
+}
+
+func (e *Engine) setLastState(chat string, messageThreadID int, snapshot state.ChatState) {
+	e.lastState = &snapshot
+	e.lastStateChat = chat
+	e.lastStateThread = messageThreadID
+}
+
+func (e *Engine) hasLastStateFor(chat string, messageThreadID int) bool {
+	return e.lastState != nil && e.lastStateChat == chat && e.lastStateThread == messageThreadID
+}
+
+func (e *Engine) emitError(cmd protocol.Command, chat string, messageThreadID int, err error) error {
 	emitErr := e.emit(protocol.Event{
-		Type:      "error",
-		CommandID: cmd.ID,
-		Action:    cmd.Action,
-		Chat:      chat,
-		Error:     err.Error(),
+		Type:            "error",
+		CommandID:       cmd.ID,
+		Action:          cmd.Action,
+		Chat:            chat,
+		MessageThreadID: messageThreadID,
+		Error:           err.Error(),
 	})
 	if emitErr != nil {
 		return emitErr
@@ -603,17 +652,19 @@ func (e *Engine) emit(evt protocol.Event) error {
 	return protocol.EncodeEvent(e.out, evt)
 }
 
-func findButton(snapshot state.ChatState, buttonText string, messageOffset int) (int, string, error) {
+func findButton(snapshot state.ChatState, buttonText string, messageOffset int, messageText string) (int, string, error) {
 	if messageOffset > 0 {
-		return findButtonWithOffset(snapshot, buttonText, messageOffset)
+		return findButtonWithOffset(snapshot, buttonText, messageOffset, messageText)
 	}
 	if snapshot.Pinned != nil {
-		callbackData, ok, err := findCallbackButtonInRows(snapshot.Pinned.Buttons, buttonText)
-		if err != nil {
-			return 0, "", err
-		}
-		if ok {
-			return snapshot.Pinned.MessageID, callbackData, nil
+		if messageMatches(snapshot.Pinned.Text, messageText) {
+			callbackData, ok, err := findCallbackButtonInRows(snapshot.Pinned.Buttons, buttonText)
+			if err != nil {
+				return 0, "", err
+			}
+			if ok {
+				return snapshot.Pinned.MessageID, callbackData, nil
+			}
 		}
 	}
 
@@ -626,6 +677,9 @@ func findButton(snapshot state.ChatState, buttonText string, messageOffset int) 
 		if isExactDuplicateOfPinned(snapshot.Pinned, msg) {
 			continue
 		}
+		if !messageMatches(msg.Text, messageText) {
+			continue
+		}
 		callbackData, ok, err := findCallbackButtonInRows(msg.Buttons, buttonText)
 		if err != nil {
 			return 0, "", err
@@ -635,13 +689,16 @@ func findButton(snapshot state.ChatState, buttonText string, messageOffset int) 
 		}
 	}
 
+	if strings.TrimSpace(messageText) != "" {
+		return 0, "", fmt.Errorf("button %q not found in messages containing %q", buttonText, messageText)
+	}
 	if snapshot.Pinned != nil {
 		return 0, "", fmt.Errorf("button %q not found in pinned or visible interactive messages", buttonText)
 	}
 	return 0, "", fmt.Errorf("button %q not found in visible interactive messages", buttonText)
 }
 
-func findButtonWithOffset(snapshot state.ChatState, buttonText string, messageOffset int) (int, string, error) {
+func findButtonWithOffset(snapshot state.ChatState, buttonText string, messageOffset int, messageText string) (int, string, error) {
 	messages := interactiveMessages(snapshot)
 	if len(messages) == 0 {
 		return 0, "", fmt.Errorf("no visible interactive message found")
@@ -649,6 +706,9 @@ func findButtonWithOffset(snapshot state.ChatState, buttonText string, messageOf
 	targetIndex := messageOffset - 1
 	matchedMessageCount := 0
 	for _, msg := range messages[1:] {
+		if !messageMatches(msg.Text, messageText) {
+			continue
+		}
 		callbackData, ok, err := findCallbackButtonInRows(msg.Buttons, buttonText)
 		if err != nil {
 			return 0, "", err
@@ -663,6 +723,14 @@ func findButtonWithOffset(snapshot state.ChatState, buttonText string, messageOf
 		return msg.ID, callbackData, nil
 	}
 	return 0, "", fmt.Errorf("button %q not found with message_offset=%d", buttonText, messageOffset)
+}
+
+func messageMatches(text string, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return true
+	}
+	return strings.Contains(text, want)
 }
 
 func findCallbackButtonInRows(rows [][]state.InlineButton, buttonText string) (string, bool, error) {

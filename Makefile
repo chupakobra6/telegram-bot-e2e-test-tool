@@ -27,7 +27,7 @@ endif
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup fmt test fixtures login interactive run-scenario run-block run-suite run-text-matrix rate-sweep print-config doctor clean
+.PHONY: help setup fmt test fixtures login chats interactive run-scenario run-block run-suite run-text-matrix rate-sweep print-config doctor clean
 
 help:
 	@printf "Available commands:\\n"
@@ -36,6 +36,7 @@ help:
 	@printf "  make doctor         # show effective config and session file status (.env auto-loaded)\\n"
 	@printf "  make print-config   # print a compact config summary\\n"
 	@printf "  make login          # create an MTProto session\\n"
+	@printf "  make chats          # list visible chats/groups and optional forum topics/admins (CHAT_FILTER=..., CHAT_TOPICS=1)\\n"
 	@printf "  make interactive    # JSONL interactive mode\\n"
 	@printf "  make run-scenario   # run one or more JSONL scenarios (SCENARIO=..., CHAT=...)\\n"
 	@printf "  make run-block      # run a stateful block with optional reset/template rendering (SCENARIO=..., CHAT=..., RUN_BLOCK_ARGS=...)\\n"
@@ -59,6 +60,9 @@ fixtures:
 
 login:
 	$(CLI) login
+
+chats:
+	$(CLI) chats $(if $(strip $(CHAT_GROUPS)),--groups,) $(if $(strip $(CHAT_FILTER)),--filter "$(CHAT_FILTER)",) $(if $(strip $(CHAT_TOPICS)),--topics,) $(if $(strip $(CHAT_ADMINS)),--admins,) $(if $(strip $(CHAT_JSON)),--json,)
 
 doctor:
 	$(CLI) doctor

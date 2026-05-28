@@ -53,9 +53,9 @@ func TestBuildCompactTranscriptNormalizesKnownStates(t *testing.T) {
 				Buttons:   [][]state.InlineButton{{{Text: "⚙️ Настройки"}}},
 			},
 			Messages: []state.VisibleMessage{{
-				ID:      2,
-				Sender:  "bot",
-				Text:    "🧾 Новый продукт\n\nНазвание: молоко\nСрок: не указан\nИсточник: текст\n\n• укажи срок годности",
+				ID:     2,
+				Sender: "bot",
+				Text:   "🧾 Новый продукт\n\nНазвание: молоко\nСрок: не указан\nИсточник: текст\n\n• укажи срок годности",
 				Buttons: [][]state.InlineButton{
 					{{Text: "📝 Название"}, {Text: "📅 Срок"}},
 					{{Text: "↩️ Отмена"}, {Text: "✅ Сохранить"}},
