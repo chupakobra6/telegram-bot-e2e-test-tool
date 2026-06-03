@@ -20,6 +20,12 @@ type fakeTransport struct {
 		messageThreadID int
 		text            string
 	}
+	editTextCalls []struct {
+		chat            string
+		messageThreadID int
+		messageID       int
+		text            string
+	}
 	sendPhotoGroupCalls []struct {
 		chat            string
 		messageThreadID int
@@ -53,6 +59,16 @@ func (f *fakeTransport) SendText(_ context.Context, chat string, messageThreadID
 		messageThreadID int
 		text            string
 	}{chat: chat, messageThreadID: messageThreadID, text: text})
+	return nil
+}
+
+func (f *fakeTransport) EditText(_ context.Context, chat string, messageThreadID int, messageID int, text string) error {
+	f.editTextCalls = append(f.editTextCalls, struct {
+		chat            string
+		messageThreadID int
+		messageID       int
+		text            string
+	}{chat: chat, messageThreadID: messageThreadID, messageID: messageID, text: text})
 	return nil
 }
 
@@ -159,6 +175,93 @@ func TestExecuteSendText(t *testing.T) {
 	}
 	if events[0].Type != "ack" || events[1].Type != "state_snapshot" || events[2].Type != "ack" || events[3].Type != "state_snapshot" {
 		t.Fatalf("unexpected event sequence: %+v", events)
+	}
+}
+
+func TestExecuteEditTextFindsOutgoingMessage(t *testing.T) {
+	transport := &fakeTransport{
+		snapshots: []state.ChatState{
+			{
+				Target:          "@group",
+				MessageThreadID: 10,
+				Messages: []state.VisibleMessage{
+					{ID: 11, Sender: "bot", Text: "prompt"},
+					{ID: 12, Sender: "self", Outgoing: true, Kind: "text", Text: "old report"},
+				},
+			},
+			{
+				Target:          "@group",
+				MessageThreadID: 10,
+				Messages: []state.VisibleMessage{
+					{ID: 11, Sender: "bot", Text: "prompt"},
+					{ID: 12, Sender: "self", Outgoing: true, Kind: "text", Text: "new report"},
+				},
+			},
+		},
+	}
+	var out bytes.Buffer
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:              "edit",
+		Action:          "edit_text",
+		Chat:            "@group",
+		MessageThreadID: 10,
+		MessageText:     "old report",
+		Text:            "new report",
+	}); err != nil {
+		t.Fatalf("edit_text error = %v", err)
+	}
+	if len(transport.editTextCalls) != 1 {
+		t.Fatalf("edit calls = %d, want 1", len(transport.editTextCalls))
+	}
+	call := transport.editTextCalls[0]
+	if call.chat != "@group" || call.messageThreadID != 10 || call.messageID != 12 || call.text != "new report" {
+		t.Fatalf("unexpected edit call: %+v", call)
+	}
+}
+
+func TestExecuteAssertVisibleText(t *testing.T) {
+	transport := &fakeTransport{
+		snapshots: []state.ChatState{{
+			Target: "@group",
+			Messages: []state.VisibleMessage{
+				{ID: 1, Sender: "bot", Text: "новый отчет опубликован"},
+			},
+		}},
+	}
+	var out bytes.Buffer
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "assert_new",
+		Action: "assert_visible_text",
+		Chat:   "@group",
+		Text:   "новый отчет",
+	}); err != nil {
+		t.Fatalf("assert_visible_text error = %v", err)
+	}
+}
+
+func TestExecuteAssertNotVisibleText(t *testing.T) {
+	transport := &fakeTransport{
+		snapshots: []state.ChatState{{
+			Target: "@group",
+			Messages: []state.VisibleMessage{
+				{ID: 1, Sender: "bot", Text: "новый отчет опубликован"},
+			},
+		}},
+	}
+	var out bytes.Buffer
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:     "assert_old_gone",
+		Action: "assert_not_visible_text",
+		Chat:   "@group",
+		Text:   "старый отчет",
+	}); err != nil {
+		t.Fatalf("assert_not_visible_text error = %v", err)
 	}
 }
 

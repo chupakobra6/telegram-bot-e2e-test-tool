@@ -241,6 +241,21 @@ func (s *Session) SendText(ctx context.Context, chat string, messageThreadID int
 	})
 }
 
+func (s *Session) EditText(ctx context.Context, chat string, _ int, messageID int, text string) error {
+	target, err := s.resolveTarget(ctx, chat)
+	if err != nil {
+		return err
+	}
+	return s.performRPC(ctx, "edit_text", true, func(callCtx context.Context) error {
+		_, err := s.raw.MessagesEditMessage(callCtx, &tg.MessagesEditMessageRequest{
+			Peer:    target.InputPeer,
+			ID:      messageID,
+			Message: text,
+		})
+		return err
+	})
+}
+
 func (s *Session) SendPhoto(ctx context.Context, chat string, messageThreadID int, path string, caption string) error {
 	target, err := s.resolveTarget(ctx, chat)
 	if err != nil {

@@ -69,6 +69,13 @@ func (c Command) Validate() error {
 		if strings.TrimSpace(c.Text) == "" {
 			return fmt.Errorf("send_text requires text")
 		}
+	case "edit_text":
+		if strings.TrimSpace(c.Text) == "" {
+			return fmt.Errorf("edit_text requires text")
+		}
+		if c.MessageOffset < 0 {
+			return fmt.Errorf("edit_text requires message_offset >= 0")
+		}
 	case "send_photo", "send_document":
 		if strings.TrimSpace(c.Path) == "" {
 			return fmt.Errorf("%s requires path", c.Action)
@@ -99,6 +106,10 @@ func (c Command) Validate() error {
 	case "delete_visible_messages":
 		if c.MaxBatches < 0 {
 			return fmt.Errorf("delete_visible_messages requires max_batches >= 0")
+		}
+	case "assert_visible_text", "assert_not_visible_text":
+		if strings.TrimSpace(c.Text) == "" {
+			return fmt.Errorf("%s requires text", c.Action)
 		}
 	case "wait", "dump_state":
 	default:

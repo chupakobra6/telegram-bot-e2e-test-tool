@@ -18,6 +18,7 @@ import (
 
 type Transport interface {
 	SendText(ctx context.Context, chat string, messageThreadID int, text string) error
+	EditText(ctx context.Context, chat string, messageThreadID int, messageID int, text string) error
 	SendPhoto(ctx context.Context, chat string, messageThreadID int, path string, caption string) error
 	SendPhotoGroup(ctx context.Context, chat string, messageThreadID int, paths []string, caption string) error
 	SendDocument(ctx context.Context, chat string, messageThreadID int, path string, caption string) error
@@ -83,6 +84,11 @@ func (e *Engine) Execute(ctx context.Context, cmd protocol.Command) error {
 			return e.emitError(cmd, chat, messageThreadID, err)
 		}
 		return e.emitAckAndSync(ctx, cmd, chat, messageThreadID)
+	case "edit_text":
+		if err := e.executeEditText(ctx, cmd, chat, messageThreadID); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
+		}
+		return e.emitAckAndSync(ctx, cmd, chat, messageThreadID)
 	case "send_photo":
 		if err := e.prepareActionBaseline(ctx, chat, messageThreadID); err != nil {
 			return e.emitError(cmd, chat, messageThreadID, err)
@@ -133,6 +139,8 @@ func (e *Engine) Execute(ctx context.Context, cmd protocol.Command) error {
 			return e.emitError(cmd, chat, messageThreadID, err)
 		}
 		return nil
+	case "assert_visible_text", "assert_not_visible_text":
+		return e.executeTextAssertion(ctx, cmd, chat, messageThreadID)
 	case "dump_state":
 		snapshot, err := e.sync(ctx, chat, messageThreadID)
 		if err != nil {
@@ -154,6 +162,82 @@ func (e *Engine) Execute(ctx context.Context, cmd protocol.Command) error {
 	default:
 		return e.emitError(cmd, chat, messageThreadID, fmt.Errorf("unsupported action %q", cmd.Action))
 	}
+}
+
+func (e *Engine) executeTextAssertion(ctx context.Context, cmd protocol.Command, chat string, messageThreadID int) error {
+	timeout := time.Duration(cmd.TimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(e.syncInterval)
+	defer ticker.Stop()
+
+	var lastSnapshot state.ChatState
+	var lastErr error
+	for {
+		snapshot, err := e.sync(ctx, chat, messageThreadID)
+		if err != nil {
+			lastErr = err
+		} else {
+			lastSnapshot = snapshot
+			e.setLastState(chat, messageThreadID, snapshot)
+			e.setCurrentTarget(chat, messageThreadID)
+			found := visibleTextExists(snapshot, cmd.Text)
+			if (cmd.Action == "assert_visible_text" && found) || (cmd.Action == "assert_not_visible_text" && !found) {
+				return e.emit(protocol.Event{
+					Type:            "state_snapshot",
+					CommandID:       cmd.ID,
+					Action:          cmd.Action,
+					Chat:            chat,
+					MessageThreadID: messageThreadID,
+					OK:              true,
+					Message:         "visible text assertion passed",
+					Snapshot:        &snapshot,
+				})
+			}
+			if cmd.Action == "assert_visible_text" {
+				lastErr = fmt.Errorf("visible text %q not found", cmd.Text)
+			} else {
+				lastErr = fmt.Errorf("visible text %q is still present", cmd.Text)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return e.emitError(cmd, chat, messageThreadID, ctx.Err())
+		case <-deadline.C:
+			event := protocol.Event{
+				Type:            "timeout",
+				CommandID:       cmd.ID,
+				Action:          cmd.Action,
+				Chat:            chat,
+				MessageThreadID: messageThreadID,
+				Error:           lastErr.Error(),
+				Snapshot:        &lastSnapshot,
+			}
+			if err := e.emit(event); err != nil {
+				return err
+			}
+			return lastErr
+		case <-ticker.C:
+		}
+	}
+}
+
+func (e *Engine) executeEditText(ctx context.Context, cmd protocol.Command, chat string, messageThreadID int) error {
+	snapshot, err := e.sync(ctx, chat, messageThreadID)
+	if err != nil {
+		return err
+	}
+	e.setLastState(chat, messageThreadID, snapshot)
+	e.setCurrentTarget(chat, messageThreadID)
+	messageID, err := findEditableTextMessage(snapshot, cmd.MessageOffset, cmd.MessageText)
+	if err != nil {
+		return err
+	}
+	return e.transport.EditText(ctx, chat, messageThreadID, messageID, cmd.Text)
 }
 
 func (e *Engine) executeClick(ctx context.Context, cmd protocol.Command, chat string, messageThreadID int) error {
@@ -807,6 +891,45 @@ func findButton(snapshot state.ChatState, buttonText string, messageOffset int, 
 		return 0, "", fmt.Errorf("button %q not found in pinned or visible interactive messages", buttonText)
 	}
 	return 0, "", fmt.Errorf("button %q not found in visible interactive messages", buttonText)
+}
+
+func findEditableTextMessage(snapshot state.ChatState, messageOffset int, messageText string) (int, error) {
+	matches := make([]state.VisibleMessage, 0, len(snapshot.Messages))
+	for i := len(snapshot.Messages) - 1; i >= 0; i-- {
+		msg := snapshot.Messages[i]
+		if msg.ID <= 0 || !msg.Outgoing || msg.Sender != "self" || msg.Kind == "service" {
+			continue
+		}
+		if !messageMatches(msg.Text, messageText) {
+			continue
+		}
+		matches = append(matches, msg)
+	}
+	if len(matches) == 0 {
+		if strings.TrimSpace(messageText) != "" {
+			return 0, fmt.Errorf("editable outgoing message containing %q not found", messageText)
+		}
+		return 0, fmt.Errorf("editable outgoing message not found")
+	}
+	if messageOffset >= len(matches) {
+		return 0, fmt.Errorf("editable outgoing message offset %d out of range; matches=%d", messageOffset, len(matches))
+	}
+	return matches[messageOffset].ID, nil
+}
+
+func visibleTextExists(snapshot state.ChatState, text string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	if snapshot.Pinned != nil && strings.Contains(snapshot.Pinned.Text, text) {
+		return true
+	}
+	for _, msg := range snapshot.Messages {
+		if strings.Contains(msg.Text, text) {
+			return true
+		}
+	}
+	return false
 }
 
 func findButtonWithOffset(snapshot state.ChatState, buttonText string, messageOffset int, messageText string) (int, string, error) {

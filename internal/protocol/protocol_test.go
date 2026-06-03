@@ -121,6 +121,38 @@ func TestParseCommandLineClickButtonMessageText(t *testing.T) {
 	}
 }
 
+func TestParseCommandLineEditText(t *testing.T) {
+	cmd, err := ParseCommandLine([]byte(`{"action":"edit_text","message_text":"old","text":"new"}`))
+	if err != nil {
+		t.Fatalf("ParseCommandLine() error = %v", err)
+	}
+	if cmd.Action != "edit_text" || cmd.MessageText != "old" || cmd.Text != "new" {
+		t.Fatalf("unexpected command: %+v", cmd)
+	}
+}
+
+func TestParseCommandLineEditTextRejectsNegativeOffset(t *testing.T) {
+	if _, err := ParseCommandLine([]byte(`{"action":"edit_text","text":"new","message_offset":-1}`)); err == nil {
+		t.Fatal("expected negative message_offset to fail")
+	}
+}
+
+func TestParseCommandLineAssertVisibleText(t *testing.T) {
+	cmd, err := ParseCommandLine([]byte(`{"action":"assert_visible_text","text":"done"}`))
+	if err != nil {
+		t.Fatalf("ParseCommandLine() error = %v", err)
+	}
+	if cmd.Action != "assert_visible_text" || cmd.Text != "done" {
+		t.Fatalf("unexpected command: %+v", cmd)
+	}
+}
+
+func TestParseCommandLineAssertVisibleTextRequiresText(t *testing.T) {
+	if _, err := ParseCommandLine([]byte(`{"action":"assert_visible_text"}`)); err == nil {
+		t.Fatal("expected missing text to fail")
+	}
+}
+
 func TestParseCommandLineDeleteVisibleMessages(t *testing.T) {
 	cmd, err := ParseCommandLine([]byte(`{"action":"delete_visible_messages","max_batches":3,"keep_oldest":true}`))
 	if err != nil {

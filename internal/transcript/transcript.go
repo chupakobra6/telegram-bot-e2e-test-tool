@@ -99,6 +99,12 @@ func commandSummary(cmd protocol.Command) string {
 	switch cmd.Action {
 	case "send_text":
 		return "text=" + summarize(cmd.Text)
+	case "edit_text":
+		summary := "text=" + summarize(cmd.Text)
+		if cmd.MessageText != "" {
+			summary += " message_text=" + summarize(cmd.MessageText)
+		}
+		return summary
 	case "send_photo_group":
 		return "paths=" + strconv.Itoa(len(cmd.Paths)) + " caption=" + summarize(cmd.Caption)
 	case "send_photo", "send_voice", "send_audio":
@@ -118,6 +124,8 @@ func commandSummary(cmd protocol.Command) string {
 			summary += " message_text=" + summarize(cmd.MessageText)
 		}
 		return summary
+	case "assert_visible_text", "assert_not_visible_text":
+		return "text=" + summarize(cmd.Text)
 	case "wait":
 		return "timeout_ms=" + strconv.Itoa(cmd.TimeoutMS)
 	default:

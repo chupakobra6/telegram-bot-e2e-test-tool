@@ -64,6 +64,7 @@ Supported actions:
 
 - `select_chat`
 - `send_text`
+- `edit_text`
 - `send_photo`
 - `send_photo_group`
 - `send_voice`
@@ -73,6 +74,8 @@ Supported actions:
 - `delete_visible_messages`
 - `wait`
 - `dump_state`
+- `assert_visible_text`
+- `assert_not_visible_text`
 
 Interactive mode and saved scenarios use the same command contract and the same execution path.
 
@@ -81,14 +84,21 @@ For Telegram forum groups, commands can target a topic by passing the numeric to
 Use `tg-e2e-tool chats --groups --filter TrackMate --topics --admins` to find the MTProto target id, forum topic ids, and bot admin topic-management rights for scenario files. The `target=` value is the chat value accepted by `select_chat`; `topic_id=` is the value accepted by `message_thread_id`/`topic`.
 
 For noisy chats with repeated inline buttons, `click_button` can be scoped with `message_text`. The button is clicked only on a visible message whose text contains that fragment.
+`edit_text` edits a visible outgoing user message. Scope it with `message_text`
+when several recent outgoing messages are present; `message_offset` selects the
+newest matching message by default.
+`assert_visible_text` and `assert_not_visible_text` check the current visible
+snapshot and fail the scenario when the expected text state is not true.
 
 For reusable test forum groups, `delete_visible_messages` removes the currently visible non-service messages from the selected chat/topic. It keeps the topic starter, pinned message, and Telegram service messages, so cleanup scenarios can preserve topic structure and pinned intro/control messages. Use `max_batches` to keep walking older history windows; the default is 8 batches. If a product intentionally leaves its intro unpinned, pass `keep_oldest: true` to keep the earliest ordinary visible message too.
 
 ```json
 {"id":"select","action":"select_chat","chat":"@your_forum_group","message_thread_id":12345}
 {"id":"start","action":"send_text","text":"/start"}
+{"id":"fix_typo","action":"edit_text","message_text":"/start","text":"/start now"}
 {"id":"open_report","action":"click_button","button_text":"🏁 Report","message_text":"Task title"}
 {"id":"wait","action":"wait","timeout_ms":15000}
+{"id":"assert_updated","action":"assert_visible_text","text":"Updated result"}
 {"id":"cleanup","action":"delete_visible_messages","max_batches":8}
 ```
 
