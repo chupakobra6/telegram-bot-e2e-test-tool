@@ -97,7 +97,7 @@ user input by the bot under test. It requires `TG_E2E_BOT_TOKEN` and
 `assert_visible_text` and `assert_not_visible_text` check the current visible
 snapshot and fail the scenario when the expected text state is not true.
 
-For reusable test forum groups, `delete_visible_messages` removes the currently visible non-service messages from the selected chat/topic. It keeps the topic starter, pinned message, and Telegram service messages, so cleanup scenarios can preserve topic structure and pinned intro/control messages. Use `max_batches` to keep walking older history windows; the default is 8 batches. If a product intentionally leaves its intro unpinned, pass `keep_oldest: true` to keep the earliest ordinary visible message too.
+For reusable test forum groups, `delete_visible_messages` removes the currently visible non-service messages from the selected chat/topic. It keeps the topic starter, pinned message, and Telegram service messages, so cleanup scenarios can preserve topic structure and pinned intro/control messages. Use `max_batches` to keep walking older history windows; the default is 8 batches. If a product intentionally leaves its intro unpinned, pass `keep_oldest: true` to keep the earliest ordinary visible message too. Pass `message_text` to delete only visible messages containing that text; this is useful for temporary demo notes that must disappear after the relevant step.
 
 ```json
 {"id":"select","action":"select_chat","chat":"@your_forum_group","message_thread_id":12345}
@@ -107,6 +107,7 @@ For reusable test forum groups, `delete_visible_messages` removes the currently 
 {"id":"wait","action":"wait","timeout_ms":15000}
 {"id":"assert_updated","action":"assert_visible_text","text":"Updated result"}
 {"id":"cleanup","action":"delete_visible_messages","max_batches":8}
+{"id":"cleanup_note","action":"delete_visible_messages","message_text":"1/6 Demo note","max_batches":2}
 ```
 
 ## Bundled Shelfy suite

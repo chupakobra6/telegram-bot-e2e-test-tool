@@ -851,6 +851,23 @@ func TestDeletableVisibleMessageIDsDeletesOldestByDefault(t *testing.T) {
 	}
 }
 
+func TestDeletableVisibleMessageIDsFiltersByMessageText(t *testing.T) {
+	snapshot := state.ChatState{
+		Pinned: &state.PinnedMessage{MessageID: 20, Text: "demo pinned"},
+		Messages: []state.VisibleMessage{
+			{ID: 12, Kind: "text", Text: "1/6 demo note"},
+			{ID: 13, Kind: "text", Text: "product card"},
+			{ID: 20, Kind: "text", Text: "demo pinned", Pinned: true},
+			{ID: 21, Kind: "text", Text: "another 1/6 demo note"},
+		},
+	}
+
+	got := deletableVisibleMessageIDs(snapshot, 0, "1/6 demo", false)
+	if len(got) != 2 || got[0] != 12 || got[1] != 21 {
+		t.Fatalf("unexpected filtered ids: %+v", got)
+	}
+}
+
 func TestExecuteWithoutChatRequiresExplicitSelection(t *testing.T) {
 	var out bytes.Buffer
 	engine := New(&fakeTransport{}, transcript.New(), &out, 50, time.Millisecond)
