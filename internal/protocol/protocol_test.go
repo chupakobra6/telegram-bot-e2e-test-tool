@@ -15,6 +15,22 @@ func TestParseCommandLine(t *testing.T) {
 	}
 }
 
+func TestParseCommandLineSendBotNote(t *testing.T) {
+	cmd, err := ParseCommandLine([]byte(`{"action":"send_bot_note","text":"Пояснение"}`))
+	if err != nil {
+		t.Fatalf("ParseCommandLine() error = %v", err)
+	}
+	if cmd.Action != "send_bot_note" || cmd.Text != "Пояснение" {
+		t.Fatalf("unexpected command: %+v", cmd)
+	}
+}
+
+func TestParseCommandLineSendBotNoteRequiresText(t *testing.T) {
+	if _, err := ParseCommandLine([]byte(`{"action":"send_bot_note"}`)); err == nil {
+		t.Fatal("expected missing text to fail")
+	}
+}
+
 func TestParseCommandLineSelectChat(t *testing.T) {
 	cmd, err := ParseCommandLine([]byte(`{"id":"select","action":"select_chat","chat":"@bot"}`))
 	if err != nil {
@@ -166,6 +182,22 @@ func TestParseCommandLineDeleteVisibleMessages(t *testing.T) {
 func TestParseCommandLineDeleteVisibleMessagesRejectsNegativeBatchLimit(t *testing.T) {
 	if _, err := ParseCommandLine([]byte(`{"action":"delete_visible_messages","max_batches":-1}`)); err == nil {
 		t.Fatal("expected negative max_batches to fail")
+	}
+}
+
+func TestParseCommandLineSleep(t *testing.T) {
+	cmd, err := ParseCommandLine([]byte(`{"action":"sleep","timeout_ms":2500}`))
+	if err != nil {
+		t.Fatalf("ParseCommandLine() error = %v", err)
+	}
+	if cmd.Action != "sleep" || cmd.TimeoutMS != 2500 {
+		t.Fatalf("unexpected command: %+v", cmd)
+	}
+}
+
+func TestParseCommandLineSleepRequiresPositiveTimeout(t *testing.T) {
+	if _, err := ParseCommandLine([]byte(`{"action":"sleep"}`)); err == nil {
+		t.Fatal("expected missing timeout to fail")
 	}
 }
 

@@ -69,6 +69,10 @@ func (c Command) Validate() error {
 		if strings.TrimSpace(c.Text) == "" {
 			return fmt.Errorf("send_text requires text")
 		}
+	case "send_bot_note":
+		if strings.TrimSpace(c.Text) == "" {
+			return fmt.Errorf("send_bot_note requires text")
+		}
 	case "edit_text":
 		if strings.TrimSpace(c.Text) == "" {
 			return fmt.Errorf("edit_text requires text")
@@ -110,6 +114,10 @@ func (c Command) Validate() error {
 	case "assert_visible_text", "assert_not_visible_text":
 		if strings.TrimSpace(c.Text) == "" {
 			return fmt.Errorf("%s requires text", c.Action)
+		}
+	case "sleep":
+		if c.TimeoutMS <= 0 {
+			return fmt.Errorf("sleep requires timeout_ms > 0")
 		}
 	case "wait", "dump_state":
 	default:

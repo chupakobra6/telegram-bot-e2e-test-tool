@@ -178,6 +178,32 @@ func TestExecuteSendText(t *testing.T) {
 	}
 }
 
+func TestExecuteSleep(t *testing.T) {
+	transport := &fakeTransport{}
+	var out bytes.Buffer
+	engine := New(transport, transcript.New(), &out, 50, time.Millisecond)
+
+	startedAt := time.Now()
+	if err := engine.Execute(context.Background(), protocol.Command{
+		ID:        "pause",
+		Action:    "sleep",
+		Chat:      "@bot",
+		TimeoutMS: 5,
+	}); err != nil {
+		t.Fatalf("Execute(sleep) error = %v", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed < 5*time.Millisecond {
+		t.Fatalf("sleep elapsed = %s, want at least 5ms", elapsed)
+	}
+	events := decodeEvents(t, out.Bytes())
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[0].Message != "sleeping for 5ms" || events[1].Message != "sleep completed" {
+		t.Fatalf("unexpected sleep events: %+v", events)
+	}
+}
+
 func TestExecuteEditTextFindsOutgoingMessage(t *testing.T) {
 	transport := &fakeTransport{
 		snapshots: []state.ChatState{

@@ -1,12 +1,16 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -81,6 +85,14 @@ func (e *Engine) Execute(ctx context.Context, cmd protocol.Command) error {
 			return e.emitError(cmd, chat, messageThreadID, err)
 		}
 		if err := e.transport.SendText(ctx, chat, messageThreadID, cmd.Text); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
+		}
+		return e.emitAckAndSync(ctx, cmd, chat, messageThreadID)
+	case "send_bot_note":
+		if err := e.prepareActionBaseline(ctx, chat, messageThreadID); err != nil {
+			return e.emitError(cmd, chat, messageThreadID, err)
+		}
+		if err := sendBotNote(ctx, cmd.Text); err != nil {
 			return e.emitError(cmd, chat, messageThreadID, err)
 		}
 		return e.emitAckAndSync(ctx, cmd, chat, messageThreadID)
@@ -159,9 +171,85 @@ func (e *Engine) Execute(ctx context.Context, cmd protocol.Command) error {
 		})
 	case "wait":
 		return e.executeWait(ctx, cmd, chat, messageThreadID)
+	case "sleep":
+		return e.executeSleep(ctx, cmd, chat, messageThreadID)
 	default:
 		return e.emitError(cmd, chat, messageThreadID, fmt.Errorf("unsupported action %q", cmd.Action))
 	}
+}
+
+func (e *Engine) executeSleep(ctx context.Context, cmd protocol.Command, chat string, messageThreadID int) error {
+	duration := time.Duration(cmd.TimeoutMS) * time.Millisecond
+	if err := e.emit(protocol.Event{
+		Type:            "ack",
+		CommandID:       cmd.ID,
+		Action:          cmd.Action,
+		Chat:            chat,
+		MessageThreadID: messageThreadID,
+		OK:              true,
+		Message:         fmt.Sprintf("sleeping for %s", duration),
+	}); err != nil {
+		return err
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return e.emitError(cmd, chat, messageThreadID, ctx.Err())
+	case <-timer.C:
+		return e.emit(protocol.Event{
+			Type:            "ack",
+			CommandID:       cmd.ID,
+			Action:          cmd.Action,
+			Chat:            chat,
+			MessageThreadID: messageThreadID,
+			OK:              true,
+			Message:         "sleep completed",
+		})
+	}
+}
+
+func sendBotNote(ctx context.Context, text string) error {
+	token := strings.TrimSpace(os.Getenv("TG_E2E_BOT_TOKEN"))
+	if token == "" {
+		return fmt.Errorf("TG_E2E_BOT_TOKEN is required for send_bot_note")
+	}
+	chatID := strings.TrimSpace(os.Getenv("TG_E2E_BOT_CHAT_ID"))
+	if chatID == "" {
+		return fmt.Errorf("TG_E2E_BOT_CHAT_ID is required for send_bot_note")
+	}
+	payload, err := json.Marshal(map[string]any{
+		"chat_id": chatID,
+		"text":    text,
+	})
+	if err != nil {
+		return fmt.Errorf("encode bot note: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+token+"/sendMessage", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("build bot note request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("send bot note request failed")
+	}
+	defer resp.Body.Close()
+	var decoded struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return fmt.Errorf("decode bot note response: %w", err)
+	}
+	if !decoded.OK {
+		description := strings.TrimSpace(decoded.Description)
+		if description == "" {
+			description = resp.Status
+		}
+		return fmt.Errorf("send bot note failed: %s", description)
+	}
+	return nil
 }
 
 func (e *Engine) executeTextAssertion(ctx context.Context, cmd protocol.Command, chat string, messageThreadID int) error {

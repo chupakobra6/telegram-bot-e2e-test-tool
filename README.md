@@ -64,6 +64,7 @@ Supported actions:
 
 - `select_chat`
 - `send_text`
+- `send_bot_note`
 - `edit_text`
 - `send_photo`
 - `send_photo_group`
@@ -73,6 +74,7 @@ Supported actions:
 - `click_button`
 - `delete_visible_messages`
 - `wait`
+- `sleep`
 - `dump_state`
 - `assert_visible_text`
 - `assert_not_visible_text`
@@ -87,6 +89,11 @@ For noisy chats with repeated inline buttons, `click_button` can be scoped with 
 `edit_text` edits a visible outgoing user message. Scope it with `message_text`
 when several recent outgoing messages are present; `message_offset` selects the
 newest matching message by default.
+`send_bot_note` sends a visible explanatory note through the Bot API instead of
+the MTProto user session. This keeps demo annotations from being processed as
+user input by the bot under test. It requires `TG_E2E_BOT_TOKEN` and
+`TG_E2E_BOT_CHAT_ID`.
+`sleep` pauses for `timeout_ms` without waiting for a chat change.
 `assert_visible_text` and `assert_not_visible_text` check the current visible
 snapshot and fail the scenario when the expected text state is not true.
 
