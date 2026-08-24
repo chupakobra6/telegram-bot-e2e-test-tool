@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"mime"
 	"net"
 	"os"
 	"path/filepath"
@@ -301,15 +302,36 @@ func (s *Session) SendDocument(ctx context.Context, chat string, messageThreadID
 	if err != nil {
 		return err
 	}
-	builder := topicBuilder(s.sender, target.InputPeer, messageThreadID).Upload(message.FromPath(path))
+	filename, mimeType := documentMetadata(path)
 	return s.performRPC(ctx, "send_document", true, func(callCtx context.Context) error {
+		builder := topicBuilder(s.sender, target.InputPeer, messageThreadID)
+		file, uploadErr := builder.Upload(message.FromPath(path)).AsInputFile(callCtx)
+		if uploadErr != nil {
+			return uploadErr
+		}
+
+		document := message.File(file).Filename(filename).MIME(mimeType)
 		if strings.TrimSpace(caption) == "" {
-			_, err = builder.File(callCtx)
+			_, err = builder.Media(callCtx, document)
 		} else {
-			_, err = builder.File(callCtx, styling.Plain(caption))
+			document = message.File(file, styling.Plain(caption)).Filename(filename).MIME(mimeType)
+			_, err = builder.Media(callCtx, document)
 		}
 		return err
 	})
+}
+
+func documentMetadata(path string) (string, string) {
+	filename := filepath.Base(path)
+	extension := strings.ToLower(filepath.Ext(filename))
+
+	if extension == ".docx" {
+		return filename, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	}
+	if mimeType := mime.TypeByExtension(extension); mimeType != "" {
+		return filename, mimeType
+	}
+	return filename, "application/octet-stream"
 }
 
 func (s *Session) SendVoice(ctx context.Context, chat string, messageThreadID int, path string) error {
