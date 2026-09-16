@@ -1,89 +1,55 @@
-# AGENTS.md
+# Telegram Bot E2E Test Tool
 
-## Project overview
-- This repository contains a real-user Telegram bot E2E testing tool built on MTProto.
-- v1 is intentionally scoped to private bot chats.
-- Keep changes minimal and targeted unless a structural change is clearly required.
-- Preserve the current architecture unless the task genuinely needs a new boundary.
+Инструмент выполняет пользовательские действия в Telegram через MTProto и сохраняет видимое состояние чата. Поддерживает приватные чаты, группы и темы форумов. Общие инженерные методы и порядок работы задают глобальные инструкции; здесь — контракты и команды владельца инструмента.
 
-## How to work
-- Start non-trivial tasks with a short plan before editing code.
-- For implementation work, explain which files will change and why.
-- If the task starts drifting, restate the plan and continue from the updated scope.
+## Владельцы поведения
 
-## Source of truth
-- Follow nearby code patterns first.
-- Treat these files as the canonical entrypoints for behavior:
-  - `cmd/tg-e2e-tool/main.go` for CLI commands and transcript save flow
-  - `internal/protocol/protocol.go` for the JSONL command/event contract
-  - `internal/engine/engine.go` for action execution semantics
-  - `internal/state/state.go` for `ChatState` and snapshot/diff behavior
-  - `internal/mtproto/client.go` for Telegram transport and chat sync behavior
-- Treat `docs/*.md` and `examples/suite/*.jsonl` as the canonical user-facing contract for setup and supported flows.
+- `cmd/tg-e2e-tool/main.go` — CLI и сохранение результатов.
+- `cmd/tg-e2e-tool/tooling_commands.go` — запуск набора сценариев Shelfy, блоков и текстовых наборов, подготовка через control API.
+- `internal/protocol/protocol.go` — JSONL-команды и события.
+- `internal/engine/engine.go` — исполнение действий.
+- `internal/state/state.go` — `ChatState`, снимки и различия.
+- `internal/mtproto/client.go` — Telegram-транспорт и обновление чата.
+- `README.md`, `docs/*.md` и `examples/suite/*.jsonl[.tmpl]` — запуск и сценарии Shelfy.
 
-## Project constraints
-- Keep the tool user-like:
-  - prefer MTProto user actions;
-  - do not add Bot API shortcuts;
-  - do not add test-only hooks that a normal Telegram user would not have unless explicitly requested.
-- The scenario format is JSONL, not YAML.
-- Interactive mode and scenario mode must keep using the same command format and the same execution path.
-- Default local paths should stay sane in code; do not make path env vars mandatory unless there is a strong reason.
+При изменении общего контракта Shelfy прочитай `/Users/igor/projects/shelfy/AGENTS.md` и согласуй затронутых потребителей. Используй действующий контракт; соседние реализации служат образцом, когда ему соответствуют.
 
-## Commands
-- Install/update dependencies: `make setup`
-- Run tests: `make test`
-- Show effective config: `make doctor`
-- Print compact config: `make print-config`
-- Create MTProto session: `make login`
-- Run interactive mode: `make interactive`
-- Run one scenario: `make run-scenario SCENARIO=examples/suite/03-text-fast-path-complete.jsonl`
-- Generate local media fixtures: `make fixtures`
-- Run the full v1 suite: `make run-suite`
-- Clean generated artifacts and the default runtime lock: `make clean`
-- `make clean` should keep the saved MTProto session at `.sessions/user.json`
-- Runtime-oriented `make` targets should load `.env` automatically; do not require users to `source .env` manually for normal local usage.
+## Границы действий
 
-## Code change policy
-- Keep diffs small and local.
-- Do not rename or move files unless it materially improves the repo.
-- Do not introduce new dependencies without a clear benefit.
-- Update tests for changed behavior.
-- Update docs and example scenarios when the public protocol, CLI, setup, or runtime behavior changes.
-- When Shelfy bot UI copy, button labels/order, dashboard flows, or control-backed behavior changes, refresh `examples/suite/*.jsonl`, docs, and help-facing surfaces in the same pass instead of leaving stale scenarios alongside current ones.
+- Действия проверяемого пользователя — сообщения, медиа, правки и кнопки — выполняй через MTProto. Проверяй результат в видимом состоянии Telegram.
+- Служебный `send_bot_note` отправляет пояснение через Bot API, чтобы бот не обработал его как пользовательский ввод. У него отдельные `TG_E2E_BOT_TOKEN` и `TG_E2E_BOT_CHAT_ID`; это аннотация демонстрации.
+- Для сценариев Shelfy используй существующий control API тестового окружения: подготовку/сброс стенда, управляемое время и запуск фоновых задач. После подготовки проверяй пользовательский результат через обычный сценарий; успех control-запроса подтверждает только его собственное действие.
+- Интерактивный режим и сохранённые сценарии используют один формат JSONL и один путь исполнения. Развивай этот путь вместе с примерами и документацией.
+- Сохраняй удобные стандартные пути. Обычные команды автоматически загружают `.env`, без ручного `source` или обязательного задания переопределений путей.
+- Управляй одним тестовым аккаунтом и стендом из одного процесса. Для проверок предпочитай выделенные тестовые аккаунты и чаты. Секреты, `.env`, `.sessions/` и сгенерированные артефакты оставляй вне Git.
 
-## Verification
-- Run the narrowest relevant validation first.
-- If protocol, state modeling, transcript logic, or CLI behavior changes, run at least:
-  - `go test ./...`
-- If command help or setup flow changes, also check:
-  - `make help`
-  - `make doctor`
-- If live Telegram behavior changes and the local environment is available, prefer validating with:
-  - one focused `make run-scenario ...`, or
-  - `make run-suite` for broader end-to-end coverage
-- After Shelfy product/UI/control changes that affect the bundled suite, prefer one full current-head live `make run-suite` over a set of targeted greens before claiming the tool is synchronized again.
-- Do not claim success without checking command output.
+## Команды
 
-## Safety
-- Never hardcode secrets, credentials, session contents, or personal account data.
-- Do not commit `.env`, `.sessions/`, or generated artifacts.
-- Prefer a dedicated Telegram test account, not a personal primary account.
-- Prefer testing against disposable or clearly test-only chats/bots when possible.
+| Действие | Команда |
+| --- | --- |
+| Установить/обновить зависимости | `make setup` |
+| Выполнить пакетные тесты | `make test` |
+| Проверить конфигурацию и авторизацию | `make doctor` |
+| Показать краткую конфигурацию | `make print-config` |
+| Создать MTProto-сессию | `make login` |
+| Запустить интерактивный режим | `make interactive` |
+| Выполнить один сценарий | `make run-scenario SCENARIO=examples/suite/03-text-fast-path-complete.jsonl CHAT=@your_bot_username` |
+| Подготовить медиа | `make fixtures` |
+| Выполнить весь набор сценариев Shelfy | `make run-suite CHAT=@your_bot_username` |
+| Удалить сгенерированные артефакты после остановки запусков | `make clean` |
 
-## Documentation boundaries
-- Keep tracked docs in English unless the user explicitly wants another language.
-- Put reusable setup, protocol, and troubleshooting guidance in `README.md` and `docs/*.md`.
-- Keep repo-specific agent guidance in this file concise and stable.
-- Do not put transient debugging notes, one-off procedures, or personal machine details into `AGENTS.md`.
-- Keep `README.md`, `docs/*.md`, `.env.example`, and `make help` consistent when setup or CLI UX changes.
-- `.env.example` should include concrete example value formats for required credentials, proxy settings, and optional path overrides; do not leave onboarding-critical fields as formatless placeholders.
+`make clean` также удаляет стандартный `.sessions/runtime.lock`, сохраняя `.sessions/user.json`. Другие команды и параметры находятся в `make help` и README.
 
-## Knowledge capture
-- Update `AGENTS.md` only for stable, high-signal repo rules:
-  - important invariants,
-  - canonical commands,
-  - repeated mistakes,
-  - validation requirements,
-  - project-specific constraints.
-- Put long workflows and operational detail into docs, not here.
+## Проверка изменений
+
+Начинай с тестов затронутого поведения: протокола, состояния, исполнения действий или сохранения результата. Расширяй охват по общим контрактам и неопределённости; `go test ./...` доступен для общего прогона. При изменении help или запуска сверь `make help` и настройку с кодом; `make doctor` используй, когда нужна проверка среды и Telegram-авторизации.
+
+Изменения текстов Shelfy, кнопок, главной панели и control API согласуй с зависимыми сценариями, документацией и help в обеих сторонах. Для затронутого живого поведения выбери соответствующий сценарий; после существенной интеграции подтверди общий путь на итоговых текущих версиях. Полный `make run-suite` нужен, когда требуется весь набор, а не после каждой локальной правки. Прямые ограничения Игоря на запуски сохраняют силу.
+
+Проверяй вывод и наблюдаемый результат перед утверждением об успехе. Различай исполнение действий, подтверждение продуктового свойства и пригодность сохранённых результатов; существенные пропуски показывай явно.
+
+## Документация
+
+Авторские инструкции и документацию веди по-русски, сохраняя точные команды, идентификаторы и язык внешних исходников. Общий способ запуска, протокол и диагностика находятся в README и `docs/`; устойчивые местные условия — здесь.
+
+При изменении запуска согласуй README, `docs/`, `.env.example` и `make help`. В примере конфигурации показывай форматы обязательных учётных данных, настроек прокси и необязательных путей. Обновляй действующие инструкции на месте: завершённую процедуру переноса заменяй текущим способом работы, оставляя полезные причины решений и открытые вопросы; история изменений хранится в Git.

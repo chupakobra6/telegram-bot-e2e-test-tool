@@ -1,18 +1,18 @@
 # Telegram Bot E2E Test Tool
 
-Real-user Telegram bot E2E testing over MTProto.
+Сквозное тестирование Telegram-ботов через пользовательский сеанс MTProto.
 
-This tool signs in as a normal Telegram user, sends messages and media to a bot, clicks inline buttons, and records the chat the way a user sees it. It exists for cases where bot-side tests are not enough and you need the real pinned dashboard, transient drafts, service messages, and visible history.
+Инструмент входит в Telegram как обычный пользователь, отправляет боту сообщения и медиа, нажимает встроенные кнопки и сохраняет видимое состояние чата. Поддерживает приватные чаты, группы и темы форумов. Он нужен, когда серверных тестов бота недостаточно: требуется увидеть настоящее закреплённое сообщение, временные черновики, служебные сообщения и историю чата.
 
-## Highlights
+## Возможности
 
-- MTProto user session, not Bot API shortcuts
-- one JSONL command format for interactive mode and saved scenarios
-- visible `ChatState` snapshots, diffs, pinned summary, and transcript artifacts
-- built-in Shelfy suite, text-matrix runner, and rate-sweep tooling
-- one runtime lock per Telegram session to prevent parallel-account corruption
+- пользовательские действия через MTProto-сеанс;
+- единый формат JSONL-команд для интерактивного режима и сохранённых сценариев;
+- снимки видимого `ChatState`, различия, состояние закреплённого сообщения и протоколы выполнения;
+- встроенный набор сценариев Shelfy, запуск текстовых наборов и подбор интервала между запросами;
+- блокировка на Telegram-сеанс для ограничения одновременного доступа к аккаунту.
 
-## Quick start
+## Быстрый запуск
 
 ```bash
 cp .env.example .env
@@ -22,23 +22,23 @@ make login
 make interactive
 ```
 
-The CLI auto-loads `.env` from the current working directory and falls back to the repo root. You do not need to `source .env` manually.
+CLI автоматически загружает `.env` из рабочего каталога, а при его отсутствии — из корня репозитория. Выполнять `source .env` вручную не нужно.
 
-For the built-in Shelfy suite:
+Для встроенного набора сценариев Shelfy:
 
 ```bash
 make fixtures
 make run-suite CHAT=@your_bot_username
 ```
 
-`make run-suite` assumes a live local Shelfy dev stack with the non-production control API reachable at `http://127.0.0.1:8081`.
+Для `make run-suite` требуется запущенное локальное тестовое окружение Shelfy с control API по адресу `http://127.0.0.1:8081`.
 
-Useful next reads:
+Подробности:
 
-- [docs/setup.md](./docs/setup.md)
-- [docs/troubleshooting.md](./docs/troubleshooting.md)
+- [Настройка](./docs/setup.md)
+- [Разбор неполадок](./docs/troubleshooting.md)
 
-## Main commands
+## Основные команды
 
 ```bash
 make help
@@ -56,11 +56,11 @@ make rate-sweep CHAT=@your_bot_username
 make clean
 ```
 
-`make clean` removes generated content under `artifacts/` and the default `.sessions/runtime.lock`, but keeps the saved MTProto session at `.sessions/user.json`.
+`make clean` удаляет сгенерированные файлы в `artifacts/` и стандартный `.sessions/runtime.lock`, сохраняя MTProto-сеанс в `.sessions/user.json`. Выполняй очистку после остановки запусков.
 
-## JSONL protocol
+## Протокол JSONL
 
-Supported actions:
+Поддерживаемые действия:
 
 - `select_chat`
 - `send_text`
@@ -79,25 +79,21 @@ Supported actions:
 - `assert_visible_text`
 - `assert_not_visible_text`
 
-Interactive mode and saved scenarios use the same command contract and the same execution path.
+Интерактивный режим и сохранённые сценарии используют один контракт команд и один путь исполнения.
 
-For Telegram forum groups, commands can target a topic by passing the numeric topic starter ID as either `message_thread_id` or its short alias `topic`. A `select_chat` with a topic keeps that topic selected for following commands until another chat or topic is selected. Scenarios without a topic continue to target the normal chat history.
+В группах-форумах команду можно направить в тему: передай числовой ID начального сообщения темы в `message_thread_id` или его короткий вариант `topic`. После `select_chat` тема сохраняется для последующих команд до выбора другого чата или темы. Сценарии без темы работают с обычной историей чата.
 
-Use `tg-e2e-tool chats --groups --filter TrackMate --topics --admins` to find the MTProto target id, forum topic ids, and bot admin topic-management rights for scenario files. The `target=` value is the chat value accepted by `select_chat`; `topic_id=` is the value accepted by `message_thread_id`/`topic`.
+Команда `tg-e2e-tool chats --groups --filter TrackMate --topics --admins` показывает MTProto-идентификатор чата, ID тем и права бота-администратора на управление темами. Значение `target=` передаётся в поле чата команды `select_chat`, а `topic_id=` — в `message_thread_id`/`topic`.
 
-For noisy chats with repeated inline buttons, `click_button` can be scoped with `message_text`. The button is clicked only on a visible message whose text contains that fragment.
-`edit_text` edits a visible outgoing user message. Scope it with `message_text`
-when several recent outgoing messages are present; `message_offset` selects the
-newest matching message by default.
-`send_bot_note` sends a visible explanatory note through the Bot API instead of
-the MTProto user session. This keeps demo annotations from being processed as
-user input by the bot under test. It requires `TG_E2E_BOT_TOKEN` and
-`TG_E2E_BOT_CHAT_ID`.
-`sleep` pauses for `timeout_ms` without waiting for a chat change.
-`assert_visible_text` and `assert_not_visible_text` check the current visible
-snapshot and fail the scenario when the expected text state is not true.
+Если в чате повторяются одинаковые кнопки, ограничь `click_button` полем `message_text`: кнопка нажимается только в видимом сообщении, содержащем этот фрагмент.
 
-For reusable test forum groups, `delete_visible_messages` removes the currently visible non-service messages from the selected chat/topic. It keeps the topic starter, pinned message, and Telegram service messages, so cleanup scenarios can preserve topic structure and pinned intro/control messages. Use `max_batches` to keep walking older history windows; the default is 8 batches. If a product intentionally leaves its intro unpinned, pass `keep_oldest: true` to keep the earliest ordinary visible message too. Pass `message_text` to delete only visible messages containing that text; this is useful for temporary demo notes that must disappear after the relevant step.
+`edit_text` редактирует видимое исходящее сообщение пользователя. При нескольких сообщениях задай `message_text`; `message_offset` по умолчанию выбирает самое новое совпадение.
+
+`send_bot_note` отправляет видимое пояснение через Bot API. Так бот не обрабатывает аннотацию демонстрации как пользовательский ввод из MTProto-сеанса. Нужны `TG_E2E_BOT_TOKEN` и `TG_E2E_BOT_CHAT_ID`.
+
+`sleep` делает паузу на `timeout_ms`, не ожидая изменения чата. `assert_visible_text` и `assert_not_visible_text` проверяют текст в текущем видимом снимке и завершают сценарий ошибкой, если ожидаемое условие не выполнено.
+
+При повторном использовании тестовой группы-форума `delete_visible_messages` удаляет видимые неслужебные сообщения выбранного чата или темы. Начальное сообщение темы, закреплённое сообщение и служебные сообщения Telegram сохраняются — вместе со структурой темы и закреплёнными вводными или управляющими сообщениями. `max_batches` задаёт число проходов по более старым окнам истории; по умолчанию — 8. Если вводное сообщение продукта намеренно не закреплено, передай `keep_oldest: true`, чтобы сохранить также самое раннее обычное видимое сообщение. Поле `message_text` ограничивает удаление сообщениями с указанным фрагментом; это удобно для временных пояснений к завершённому шагу демонстрации.
 
 ```json
 {"id":"select","action":"select_chat","chat":"@your_forum_group","message_thread_id":12345}
@@ -110,39 +106,41 @@ For reusable test forum groups, `delete_visible_messages` removes the currently 
 {"id":"cleanup_note","action":"delete_visible_messages","message_text":"1/6 Demo note","max_batches":2}
 ```
 
-## Bundled Shelfy suite
+## Встроенный набор сценариев Shelfy
 
-The built-in suite in [`examples/suite/`](./examples/suite/) is kept in sync with current Shelfy product flows. It currently covers:
+Встроенный набор [`examples/suite/`](./examples/suite/) сопровождает пользовательские сценарии Shelfy:
 
-- `/start` idempotence and `/dashboard` recovery
-- dashboard navigation and settings actions
-- text fast-path draft creation and confirm
-- incomplete draft name editing
-- repeated date editing with invalid and valid input
-- unsupported document upload
-- unsupported photo fail-closed handling
-- product close, discard, and delete flows
-- voice upload and cleanup back to home
-- audio upload and cleanup back to home
-- blocked save on incomplete drafts and draft cancellation
-- timed digest setup, observation, close, and reconciliation cleanup
-- dashboard pagination and back-to-origin navigation
-- rapid same-user interaction ordering around settings and draft editing
+- повторный `/start` и восстановление через `/dashboard`;
+- навигация по главной панели и настройкам;
+- быстрое создание черновика из текста и подтверждение;
+- изменение названия неполного черновика;
+- повторное изменение даты, ошибочный и допустимый ввод;
+- загрузка неподдерживаемого документа;
+- отклонение неподдерживаемой фотографии;
+- закрытие продукта как съеденного или выброшенного и удаление;
+- загрузка голосового сообщения, очистка и возврат к главной панели;
+- загрузка аудиофайла, очистка и возврат к главной панели;
+- отказ сохранения неполного черновика и отмена черновика;
+- подготовка утренней сводки в управляемое время, наблюдение, закрытие продукта и очистка сводки;
+- постраничный список и возврат к исходному месту навигации;
+- быстрые последовательные действия одного пользователя в настройках и при редактировании черновика.
 
-Run the full suite with:
+Набор выполняет действия и сохраняет наблюдаемое состояние. Текущие сценарии не проверяют автоматически все перечисленные свойства: например, наблюдение и очистка сводки ограничены снимками. Успешное исполнение команд само по себе не подтверждает каждый продуктовый результат; проверяй соответствующий снимок и действующие утверждения сценария.
+
+Весь набор:
 
 ```bash
 make fixtures
 make run-suite CHAT=@your_bot_username
 ```
 
-Run one focused scenario with:
+Один сценарий:
 
 ```bash
 make run-scenario SCENARIO=examples/suite/05-edit-date-valid-invalid.jsonl CHAT=@your_bot_username
 ```
 
-If you want a fresh home dashboard before a targeted scenario, prepend the helper fragment:
+Чтобы перед отдельным сценарием вернуть главную панель в исходное состояние, добавь вспомогательный фрагмент:
 
 ```bash
 CHAT=@your_bot_username \
@@ -151,9 +149,9 @@ go run ./cmd/tg-e2e-tool run-scenario \
   examples/suite/05-edit-date-valid-invalid.jsonl
 ```
 
-## Fixtures and transcripts
+## Тестовые файлы и протоколы выполнения
 
-`make fixtures` generates:
+`make fixtures` создаёт:
 
 - `artifacts/fixtures/e2e-photo.png`
 - `artifacts/fixtures/e2e-receipt.png`
@@ -162,7 +160,7 @@ go run ./cmd/tg-e2e-tool run-scenario \
 - `artifacts/fixtures/e2e-audio.mp3`
 - `artifacts/fixtures/e2e-document.txt`
 
-After every `run-scenario` or `run-suite`, the tool refreshes rolling transcript artifacts under `artifacts/transcripts/`:
+`run-scenario` и `run-suite` сохраняют протоколы и обновляют файлы последнего запуска в `artifacts/transcripts/`:
 
 - `last-run-artifacts.json`
 - `last-run-summary.json`
@@ -170,30 +168,32 @@ After every `run-scenario` or `run-suite`, the tool refreshes rolling transcript
 - `last-failure.json`
 - `last-failure.txt`
 
-Recommended triage order:
+Порядок разбора результата:
 
-1. open `artifacts/transcripts/last-run-summary.txt`
-2. if failed, open `artifacts/transcripts/last-failure.txt`
-3. only then open per-scenario compact or raw transcripts
+1. Открой `artifacts/transcripts/last-run-summary.txt`.
+2. При ошибке открой `artifacts/transcripts/last-failure.txt`.
+3. Для подробностей прочитай краткий или исходный протокол нужного сценария.
 
-## Repository layout
+Сверяй итог с кодом завершения команды и сообщениями об ошибках сохранения. Текущая сводка не отражает все отказы подготовки, разбора сценария и записи артефактов; отсутствие ошибки в ней не всегда означает полный успешный запуск.
 
-- [`cmd/tg-e2e-tool`](./cmd/tg-e2e-tool) — main CLI
-- [`cmd/fixturegen`](./cmd/fixturegen) — standalone PNG fixture generator
-- [`examples/suite`](./examples/suite) — current bundled Shelfy suite
-- [`examples/helpers`](./examples/helpers) — reusable helper fragments
-- [`examples/bench`](./examples/bench) — benchmark and rate-sweep scenarios
-- [`internal/protocol`](./internal/protocol) — JSONL command/event contract
-- [`internal/engine`](./internal/engine) — action execution path
-- [`internal/state`](./internal/state) — visible chat snapshot/diff model
-- [`internal/mtproto`](./internal/mtproto) — Telegram transport and sync behavior
+## Устройство репозитория
 
-## Notes
+- [`cmd/tg-e2e-tool`](./cmd/tg-e2e-tool) — основной CLI;
+- [`cmd/fixturegen`](./cmd/fixturegen) — отдельный генератор тестовых PNG;
+- [`examples/suite`](./examples/suite) — встроенный набор сценариев Shelfy;
+- [`examples/helpers`](./examples/helpers) — повторно используемые вспомогательные фрагменты;
+- [`examples/bench`](./examples/bench) — измерительные сценарии и подбор интервала между запросами;
+- [`internal/protocol`](./internal/protocol) — контракт JSONL-команд и событий;
+- [`internal/engine`](./internal/engine) — исполнение действий;
+- [`internal/state`](./internal/state) — модель видимого снимка чата и различий;
+- [`internal/mtproto`](./internal/mtproto) — Telegram-транспорт и обновление состояния.
 
-- The tool is intentionally user-like: no Bot API shortcuts and no test-only bot backdoors.
-- The bundled scenarios keep an explicit `select_chat` step and use the placeholder `@your_bot_username`; `run-scenario`, `run-suite`, and `rate-sweep` materialize it from `CHAT=@your_bot_username`.
-- Relative media paths resolve relative to the scenario file. Paths starting with `@fixtures/` resolve to the tool-owned `artifacts/fixtures/` directory.
-- `send_photo_group` sends one Telegram album/media group with 2-10 photo paths and one caption applied to every item:
+## Условия работы
+
+- Действия проверяемого пользователя выполняются через MTProto, а отдельный `send_bot_note` использует Bot API для пояснений к демонстрации. [Блоки с подготовкой состояния](./docs/setup.md#10-run-a-stateful-block) и [встроенный набор Shelfy](./docs/setup.md#6-run-the-built-in-shelfy-suite) используют control API тестового окружения для подготовки/сброса состояния и запуска заданий по времени; продуктовый результат наблюдается через Telegram.
+- Во встроенных сценариях есть явный шаг `select_chat` с заполнителем `@your_bot_username`; `run-scenario`, `run-suite` и `rate-sweep` подставляют в него значение из `CHAT=@your_bot_username`.
+- Относительные пути медиа отсчитываются от файла сценария. Префикс `@fixtures/` указывает на каталог инструмента `artifacts/fixtures/`.
+- `send_photo_group` отправляет один Telegram-альбом: от 2 до 10 путей фотографий и общую подпись, применяемую к каждому элементу:
   `{"id":"album","action":"send_photo_group","paths":["@fixtures/e2e-photo.png","@fixtures/e2e-receipt.png"],"caption":"общая подпись"}`
-- `delete_visible_messages` uses the MTProto user account. In supergroups, that account needs enough rights to delete bot messages if the cleanup should remove both test-user messages and bot replies.
-- Do not run `login`, `interactive`, `run-scenario`, `run-block`, `run-text-matrix`, or `rate-sweep` in parallel with the same Telegram account.
+- `delete_visible_messages` использует MTProto-аккаунт пользователя. Для удаления и пользовательских сообщений, и ответов бота в супергруппе этому аккаунту нужны права на удаление сообщений бота.
+- Запускай `login`, `interactive`, `run-scenario`, `run-block`, `run-text-matrix` и `rate-sweep` последовательно для одного Telegram-аккаунта.
