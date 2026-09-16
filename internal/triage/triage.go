@@ -2,6 +2,7 @@ package triage
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -9,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
+	"github.com/igor/telegram-bot-e2e-test-tool/internal/engine"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/protocol"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/state"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/transcript"
@@ -26,19 +27,21 @@ const (
 )
 
 type CompactEvent struct {
-	At        time.Time `json:"at"`
-	Kind      string    `json:"kind"`
-	Type      string    `json:"type,omitempty"`
-	CommandID string    `json:"command_id,omitempty"`
-	Action    string    `json:"action,omitempty"`
-	Target    string    `json:"target,omitempty"`
-	State     string    `json:"state,omitempty"`
-	Diff      string    `json:"diff,omitempty"`
-	Message   string    `json:"message,omitempty"`
-	Error     string    `json:"error,omitempty"`
+	SourceEvent int       `json:"source_event"`
+	At          time.Time `json:"at"`
+	Kind        string    `json:"kind"`
+	Type        string    `json:"type,omitempty"`
+	CommandID   string    `json:"command_id,omitempty"`
+	Action      string    `json:"action,omitempty"`
+	Target      string    `json:"target,omitempty"`
+	State       string    `json:"state,omitempty"`
+	Diff        string    `json:"diff,omitempty"`
+	Message     string    `json:"message,omitempty"`
+	Error       string    `json:"error,omitempty"`
 }
 
 type CompactTranscript struct {
+	RawJSON         string         `json:"raw_json,omitempty"`
 	StartedAt       time.Time      `json:"started_at"`
 	Events          []CompactEvent `json:"events"`
 	FinalStateLabel string         `json:"final_state_label,omitempty"`
@@ -46,6 +49,11 @@ type CompactTranscript struct {
 }
 
 type SummaryRow struct {
+	RunID            string    `json:"run_id"`
+	RunStatus        string    `json:"run_status"`
+	ExecutionStatus  string    `json:"execution_status"`
+	PropertyStatus   string    `json:"property_status"`
+	FailureStage     string    `json:"failure_stage,omitempty"`
 	ScenarioPath     string    `json:"scenario_path"`
 	TranscriptLabel  string    `json:"transcript_label"`
 	Status           string    `json:"status"`
@@ -74,6 +82,8 @@ type FailureTimelineEntry struct {
 }
 
 type FailureReport struct {
+	RunID                  string                 `json:"run_id"`
+	RunStatus              string                 `json:"run_status"`
 	ScenarioPath           string                 `json:"scenario_path"`
 	TranscriptLabel        string                 `json:"transcript_label"`
 	Status                 string                 `json:"status"`
@@ -104,27 +114,15 @@ type finalStateSummary struct {
 	Buttons                []string
 }
 
-var (
-	reHomeTracked    = regexp.MustCompile(`Сейчас отслеживаем:\s*(\d+)`)
-	reHomeSoon       = regexp.MustCompile(`Скоро истекают:\s*(\d+)`)
-	reHomeExpired    = regexp.MustCompile(`Уже истекли:\s*(\d+)`)
-	reStatsEaten     = regexp.MustCompile(`Съедены:\s*(\d+)`)
-	reStatsWasted    = regexp.MustCompile(`Выброшены:\s*(\d+)`)
-	reStatsDeleted   = regexp.MustCompile(`Удалены:\s*(\d+)`)
-	reSettingsTZ     = regexp.MustCompile(`Часовой пояс:\s*([^\n|]+)`)
-	reSettingsDigest = regexp.MustCompile(`Утренний дайджест:\s*([0-9]{2}:[0-9]{2})`)
-	reDraftName      = regexp.MustCompile(`Название:\s*([^\n|]+)`)
-	reDraftDate      = regexp.MustCompile(`Срок:\s*([^\n|]+)`)
-	reDraftSource    = regexp.MustCompile(`Источник:\s*([^\n|]+)`)
-	reWhitespace     = regexp.MustCompile(`\s+`)
-)
+var reWhitespace = regexp.MustCompile(`\s+`)
 
 func BuildCompactTranscript(tr *transcript.Transcript) CompactTranscript {
 	compact := CompactTranscript{StartedAt: tr.StartedAt}
 	var lastPinnedLabel string
-	for _, event := range tr.Events {
+	for index, event := range tr.Events {
 		entry, pinnedLabel := compactEvent(event, lastPinnedLabel)
 		if entry != nil {
+			entry.SourceEvent = index + 1
 			compact.Events = append(compact.Events, *entry)
 		}
 		if pinnedLabel != "" {
@@ -132,13 +130,13 @@ func BuildCompactTranscript(tr *transcript.Transcript) CompactTranscript {
 		}
 	}
 	final := summarizeFinalState(lastSnapshot(tr))
-	compact.FinalStateLabel = final.PrimaryStateLabel
+	compact.FinalStateLabel = compactStateExcerpt(final.PrimaryStateLabel)
 	compact.FinalButtons = final.Buttons
 	return compact
 }
 
 func (c CompactTranscript) RenderText() string {
-	lines := []string{"Compact Transcript"}
+	lines := []string{"Compact Transcript", "raw_json=" + c.RawJSON}
 	for _, event := range c.Events {
 		var parts []string
 		switch event.Kind {
@@ -177,6 +175,7 @@ func (c CompactTranscript) RenderText() string {
 				parts = append(parts, "error="+event.Error)
 			}
 		}
+		parts = append(parts, fmt.Sprintf("source_event=%d", event.SourceEvent))
 		lines = append(lines, strings.Join(parts, " "))
 	}
 	if c.FinalStateLabel != "" {
@@ -188,11 +187,13 @@ func (c CompactTranscript) RenderText() string {
 	return strings.Join(lines, "\n")
 }
 
-func BuildSummaryRow(tr *transcript.Transcript, scenarioPath, label, rawJSON, rawText, compactJSON, compactText string) SummaryRow {
+func BuildSummaryRow(tr *transcript.Transcript, scenarioPath, label, rawJSON, rawText, compactJSON, compactText string, executionErr error) SummaryRow {
 	row := SummaryRow{
 		ScenarioPath:    scenarioPath,
 		TranscriptLabel: label,
 		Status:          "passed",
+		ExecutionStatus: "passed",
+		PropertyStatus:  "not_checked",
 		StartedAt:       tr.StartedAt,
 		RawJSON:         rawJSON,
 		RawText:         rawText,
@@ -212,11 +213,37 @@ func BuildSummaryRow(tr *transcript.Transcript, scenarioPath, label, rawJSON, ra
 		row.TerminalError = failure.Error
 		row.FailureAt = failure.At
 	}
+	if executionErr != nil {
+		row.Status = "failed"
+		row.TerminalError = executionErr.Error()
+		row.FailureAt = time.Now().UTC()
+		row.FinishedAt = row.FailureAt
+		row.DurationMS = row.FinishedAt.Sub(row.StartedAt).Milliseconds()
+	}
+	row.ExecutionStatus = row.Status
+	for _, event := range tr.Events {
+		if event.Output == nil || (event.Output.Action != "assert_visible_text" && event.Output.Action != "assert_not_visible_text") {
+			continue
+		}
+		if event.Output.Type == "timeout" || event.Output.Type == "error" {
+			var product *engine.ProductFailure
+			if errors.As(executionErr, &product) {
+				row.PropertyStatus = "assertions_failed"
+			} else {
+				row.PropertyStatus = "unknown"
+			}
+		} else if event.Output.OK && event.Output.Message == "visible text assertion passed" && row.PropertyStatus != "assertions_failed" {
+			row.PropertyStatus = "assertions_passed"
+		}
+	}
+	if executionErr != nil && row.PropertyStatus == "assertions_passed" {
+		row.PropertyStatus = "partial"
+	}
 	if diff := lastDiffSummary(tr); diff != "" {
 		row.LastDiffSummary = diff
 	}
 	final := summarizeFinalState(lastSnapshot(tr))
-	row.FinalStateLabel = final.PrimaryStateLabel
+	row.FinalStateLabel = compactStateExcerpt(final.PrimaryStateLabel)
 	row.FinalButtons = final.Buttons
 	return row
 }
@@ -226,7 +253,7 @@ func RenderSummaryText(rows []SummaryRow) string {
 	for _, row := range rows {
 		status := row.Status
 		if status == "" {
-			status = "passed"
+			status = "unknown"
 		}
 		duration := fmt.Sprintf("%dms", row.DurationMS)
 		failing := row.FailingAction
@@ -245,13 +272,13 @@ func RenderSummaryText(rows []SummaryRow) string {
 			finalState = "-"
 		}
 		lines = append(lines, fmt.Sprintf(
-			"scenario=%s status=%s duration=%s failing=%s error=%s final=%s",
+			"scenario=%s status=%s duration=%s failing=%s error=%s final=%s run_id=%s run_status=%s execution=%s property=%s stage=%s",
 			row.ScenarioPath,
 			status,
 			duration,
 			failing,
 			errText,
-			finalState,
+			finalState, row.RunID, row.RunStatus, row.ExecutionStatus, row.PropertyStatus, row.FailureStage,
 		))
 	}
 	return strings.Join(lines, "\n")
@@ -266,6 +293,7 @@ func BuildLastFailure(rows []SummaryRow, transcripts map[string]*transcript.Tran
 		tr := transcripts[row.TranscriptLabel]
 		if tr == nil {
 			return &FailureReport{
+				RunID: row.RunID, RunStatus: row.RunStatus,
 				ScenarioPath:     row.ScenarioPath,
 				TranscriptLabel:  row.TranscriptLabel,
 				Status:           row.Status,
@@ -286,6 +314,7 @@ func BuildLastFailure(rows []SummaryRow, transcripts map[string]*transcript.Tran
 			}
 		}
 		report := &FailureReport{
+			RunID: row.RunID, RunStatus: row.RunStatus,
 			ScenarioPath:     row.ScenarioPath,
 			TranscriptLabel:  row.TranscriptLabel,
 			Status:           row.Status,
@@ -315,7 +344,7 @@ func BuildLastFailure(rows []SummaryRow, transcripts map[string]*transcript.Tran
 }
 
 func (r FailureReport) RenderText() string {
-	lines := []string{"Last Failure"}
+	lines := []string{"Last Failure", "run_id=" + r.RunID + " run_status=" + r.RunStatus}
 	lines = append(lines, fmt.Sprintf("scenario=%s", r.ScenarioPath))
 	lines = append(lines, fmt.Sprintf("label=%s", r.TranscriptLabel))
 	lines = append(lines, fmt.Sprintf("failing=%s:%s", valueOrDash(r.FailingCommandID), valueOrDash(r.FailingAction)))
@@ -419,7 +448,7 @@ func compactEvent(event transcript.Event, lastPinnedLabel string) (*CompactEvent
 		pinnedLabel := normalizedPinnedState(event.Output.Snapshot)
 		if stateLabel != "" {
 			if entry.Type == "state_update" || entry.Type == "state_snapshot" {
-				entry.State = stateLabel
+				entry.State = compactStateExcerpt(stateLabel)
 			}
 			if pinnedLabel != "" && pinnedLabel == lastPinnedLabel && stateLabel == pinnedLabel {
 				entry.State = ""
@@ -540,9 +569,10 @@ func buildFailureWindow(tr *transcript.Transcript) []CompactEvent {
 			}
 		}
 	}
-	for _, event := range tr.Events[start:end] {
+	for index, event := range tr.Events[start:end] {
 		entry, pinned := compactEvent(event, lastPinned)
 		if entry != nil {
+			entry.SourceEvent = start + index + 1
 			window = append(window, *entry)
 		}
 		if pinned != "" {
@@ -757,121 +787,28 @@ func normalizeDiffSummary(summary string) string {
 }
 
 func normalizeError(err string) string {
-	return compactExcerpt(err, messageExcerptLimit)
+	return collapseWhitespace(err)
+}
+
+// State and button labels retain the source wording, including negations,
+// conditions and symbols. Product-specific guesses can turn failure into success.
+func compactStateExcerpt(text string) string {
+	if len([]rune(text)) > 600 {
+		return compactExcerpt(text, 600) + " [truncated; see raw_json]"
+	}
+	return text
 }
 
 func normalizeStateLabel(text string) string {
-	raw := strings.TrimSpace(text)
-	if raw == "" {
-		return ""
-	}
-	switch {
-	case strings.Contains(raw, "Главная") && reHomeTracked.MatchString(raw):
-		return fmt.Sprintf(
-			"home tracked=%s soon=%s expired=%s",
-			firstSubmatch(reHomeTracked, raw),
-			firstSubmatch(reHomeSoon, raw),
-			firstSubmatch(reHomeExpired, raw),
-		)
-	case strings.Contains(raw, "Настройки") && reSettingsTZ.MatchString(raw):
-		return fmt.Sprintf(
-			"settings tz=%s digest=%s",
-			collapseWhitespace(firstSubmatch(reSettingsTZ, raw)),
-			firstSubmatch(reSettingsDigest, raw),
-		)
-	case strings.Contains(raw, "Статистика") && reStatsEaten.MatchString(raw):
-		return fmt.Sprintf(
-			"stats tracked=%s soon=%s expired=%s eaten=%s wasted=%s deleted=%s",
-			firstSubmatch(reHomeTracked, raw),
-			firstSubmatch(reHomeSoon, raw),
-			firstSubmatch(reHomeExpired, raw),
-			firstSubmatch(reStatsEaten, raw),
-			firstSubmatch(reStatsWasted, raw),
-			firstSubmatch(reStatsDeleted, raw),
-		)
-	case strings.Contains(raw, "Активные продукты"):
-		if strings.Count(raw, "•") == 0 {
-			return "list_empty"
-		}
-		return fmt.Sprintf("list count=%d", strings.Count(raw, "•"))
-	case strings.Contains(raw, "Скоро истекают") && strings.Count(raw, "•") >= 0 && !strings.Contains(raw, "Сейчас отслеживаем"):
-		if strings.Count(raw, "•") == 0 {
-			return "soon_empty"
-		}
-		return fmt.Sprintf("soon count=%d", strings.Count(raw, "•"))
-	case strings.Contains(raw, "Новый продукт"):
-		name := collapseWhitespace(firstSubmatch(reDraftName, raw))
-		date := collapseWhitespace(firstSubmatch(reDraftDate, raw))
-		source := collapseWhitespace(firstSubmatch(reDraftSource, raw))
-		if date == "" || strings.Contains(strings.ToLower(date), "не указан") {
-			date = "missing"
-		}
-		status := "ready"
-		lower := strings.ToLower(raw)
-		switch {
-		case strings.Contains(lower, "укажи срок"):
-			status = "needs_date"
-		case strings.Contains(lower, "укажи название"):
-			status = "needs_name"
-		}
-		return fmt.Sprintf("draft name=%s date=%s source=%s status=%s",
-			safeField(name),
-			safeField(date),
-			safeField(source),
-			status,
-		)
-	case strings.Contains(strings.ToLower(raw), "укажи срок"):
-		return "prompt_date"
-	case strings.Contains(strings.ToLower(raw), "укажи название"):
-		return "prompt_name"
-	case strings.Contains(strings.ToLower(raw), "принял") || strings.Contains(strings.ToLower(raw), "обрабаты"):
-		return "processing"
-	case strings.Contains(strings.ToLower(raw), "отмен"):
-		return "feedback_cancelled"
-	case strings.Contains(strings.ToLower(raw), "невер") || strings.Contains(strings.ToLower(raw), "не смог распознать дату"):
-		return "feedback_invalid_date"
-	case strings.Contains(strings.ToLower(raw), "удален") || strings.Contains(strings.ToLower(raw), "удалён"):
-		return "feedback_deleted"
-	case strings.Contains(strings.ToLower(raw), "сохран"):
-		return "feedback_saved"
-	default:
-		return compactExcerpt(raw, messageExcerptLimit)
-	}
+	return collapseWhitespace(text)
 }
 
 func normalizeButtonLabel(text string) string {
-	trimmed := collapseWhitespace(text)
-	switch trimmed {
-	case "📋 Список", "Список":
-		return "list"
-	case "⏰ Скоро", "Скоро":
-		return "soon"
-	case "📊 Статистика", "Статистика":
-		return "stats"
-	case "⚙️ Настройки", "Настройки":
-		return "settings"
-	case "⬅️ Назад", "Назад":
-		return "back"
-	case "✅ Сохранить", "Сохранить":
-		return "save"
-	case "📝 Название", "Название":
-		return "edit_name"
-	case "📅 Срок", "Срок":
-		return "edit_date"
-	case "❌ Удалить", "Удалить":
-		return "delete"
-	case "↩️ Отмена", "Отмена":
-		return "cancel"
-	}
-	plain := compactExcerpt(trimmed, 32)
-	if plain == "" {
-		return ""
-	}
-	return plain
+	return collapseWhitespace(text)
 }
 
 func compactExcerpt(value string, limit int) string {
-	value = collapseWhitespace(stripDecorativeSymbols(value))
+	value = collapseWhitespace(value)
 	if value == "" {
 		return "-"
 	}
@@ -885,48 +822,12 @@ func compactExcerpt(value string, limit int) string {
 	return string(runes[:limit-1]) + "…"
 }
 
-func stripDecorativeSymbols(value string) string {
-	var b strings.Builder
-	for _, r := range value {
-		switch {
-		case unicode.Is(unicode.So, r):
-			continue
-		case unicode.Is(unicode.Sk, r):
-			continue
-		case unicode.IsControl(r) && r != '\n' && r != '\t' && r != '\r':
-			continue
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
 func collapseWhitespace(value string) string {
 	value = strings.ReplaceAll(value, "\n", " ")
 	value = strings.ReplaceAll(value, "\r", " ")
 	value = strings.ReplaceAll(value, "\t", " ")
 	value = reWhitespace.ReplaceAllString(value, " ")
 	return strings.TrimSpace(value)
-}
-
-func firstSubmatch(re *regexp.Regexp, value string) string {
-	if re == nil {
-		return ""
-	}
-	matches := re.FindStringSubmatch(value)
-	if len(matches) < 2 {
-		return ""
-	}
-	return strings.TrimSpace(matches[1])
-}
-
-func safeField(value string) string {
-	value = compactExcerpt(value, 32)
-	if value == "" || value == "-" {
-		return "missing"
-	}
-	return value
 }
 
 func valueOrDash(value string) string {

@@ -66,7 +66,7 @@ func TestSaveTranscriptAndArtifactMap(t *testing.T) {
 	cfg := config.Config{TranscriptOutputDir: dir}
 	tr := transcript.New()
 
-	artifact, err := saveScenarioArtifacts(cfg, tr, "/tmp/scenario-a.jsonl", "scenario-a", os.Stderr)
+	artifact, err := saveScenarioArtifacts(cfg, tr, "/tmp/scenario-a.jsonl", "scenario-a", os.Stderr, nil)
 	if err != nil {
 		t.Fatalf("saveScenarioArtifacts() error = %v", err)
 	}
@@ -121,7 +121,7 @@ func TestSaveLastRunArtifactsRemovesStaleFailureAfterGreenRun(t *testing.T) {
 	failed := transcript.New()
 	failed.AddCommand(protocol.Command{ID: "wait", Action: "wait"})
 	failed.AddEvent(protocol.Event{Type: "timeout", CommandID: "wait", Action: "wait", Error: "wait timeout after 8s"})
-	failedArtifacts, err := saveScenarioArtifacts(cfg, failed, "/tmp/fail.jsonl", "fail", os.Stderr)
+	failedArtifacts, err := saveScenarioArtifacts(cfg, failed, "/tmp/fail.jsonl", "fail", os.Stderr, nil)
 	if err != nil {
 		t.Fatalf("saveScenarioArtifacts(failed) error = %v", err)
 	}
@@ -131,7 +131,7 @@ func TestSaveLastRunArtifactsRemovesStaleFailureAfterGreenRun(t *testing.T) {
 	}
 
 	passed := transcript.New()
-	passedArtifacts, err := saveScenarioArtifacts(cfg, passed, "/tmp/pass.jsonl", "pass", os.Stderr)
+	passedArtifacts, err := saveScenarioArtifacts(cfg, passed, "/tmp/pass.jsonl", "pass", os.Stderr, nil)
 	if err != nil {
 		t.Fatalf("saveScenarioArtifacts(passed) error = %v", err)
 	}

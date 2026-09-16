@@ -158,14 +158,16 @@ func EncodeEvent(w io.Writer, event Event) error {
 func ReadCommands(r io.Reader, fn func(Command) error) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 1024), 1024*1024)
+	lineNumber := 0
 	for scanner.Scan() {
+		lineNumber++
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 || bytes.HasPrefix(line, []byte("#")) {
 			continue
 		}
 		cmd, err := ParseCommandLine(line)
 		if err != nil {
-			return err
+			return fmt.Errorf("line %d: %w", lineNumber, err)
 		}
 		if err := fn(cmd); err != nil {
 			return err

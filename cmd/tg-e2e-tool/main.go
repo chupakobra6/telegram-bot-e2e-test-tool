@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -40,6 +40,9 @@ type runScenarioArtifact struct {
 }
 
 type runScenarioArtifactMap struct {
+	RunID              string                `json:"run_id"`
+	Status             string                `json:"status"`
+	Error              string                `json:"error,omitempty"`
 	GeneratedAt        time.Time             `json:"generated_at"`
 	LastRunSummaryJSON string                `json:"last_run_summary_json,omitempty"`
 	LastRunSummaryText string                `json:"last_run_summary_text,omitempty"`
@@ -78,7 +81,7 @@ func run(args []string, stdin, stdout, stderr *os.File) int {
 		printUsage(stdout)
 		return 0
 	case "fixtures":
-		if err := runFixturesCommand(repoRoot); err != nil {
+		if err := runFixturesCommand(cfg, repoRoot); err != nil {
 			return printError(stderr, 1, err)
 		}
 	case "print-config":
@@ -110,20 +113,21 @@ func run(args []string, stdin, stdout, stderr *os.File) int {
 		}); err != nil {
 			return printError(stderr, 1, err)
 		}
+	case "clean":
+		if err := cleanArtifacts(cfg, repoRoot); err != nil {
+			return printError(stderr, 1, err)
+		}
 	case "interactive":
-		tr := transcript.New()
-		err := withRuntimeLock(cfg, func() error {
-			return client.RunAuthorized(context.Background(), func(ctx context.Context, session *mtproto.Session) error {
-				if err := emitInteractiveReady(tr, stdout, cfg); err != nil {
-					return err
-				}
-				runner := engine.New(session, tr, stdout, cfg.HistoryWindow, cfg.SyncInterval)
-				return runCommandStream(ctx, runner, func(fn func(protocol.Command) error) error {
+		err := runRecorded(cfg, []string{"interactive"}, func(result *runResult) error {
+			return atStage("authorize", client.RunAuthorized(context.Background(), func(ctx context.Context, session *mtproto.Session) error {
+				return result.execute(ctx, session, []scenarioSource{{ScenarioPath: "interactive", Prefix: "interactive", Read: func(fn func(protocol.Command) error) error {
+					if err := emitInteractiveReady(transcript.New(), stdout, cfg); err != nil {
+						return err
+					}
 					return protocol.ReadCommands(stdin, fn)
-				})
-			})
+				}}})
+			}))
 		})
-		saveTranscript(cfg, tr, "interactive", stderr)
 		if err != nil {
 			return printError(stderr, 1, err)
 		}
@@ -168,7 +172,7 @@ func run(args []string, stdin, stdout, stderr *os.File) int {
 }
 
 func printUsage(out io.Writer) {
-	fmt.Fprintln(out, "usage: tg-e2e-tool <help|doctor|chats|login|interactive|fixtures|run-scenario|run-block|run-text-matrix|run-suite|rate-sweep|print-config> [path ...]")
+	fmt.Fprintln(out, "usage: tg-e2e-tool <help|doctor|chats|login|interactive|fixtures|clean|run-scenario|run-block|run-text-matrix|run-suite|rate-sweep|print-config> [path ...]")
 	fmt.Fprintln(out, "the CLI auto-loads .env from the current working directory, with repo-root fallback")
 	fmt.Fprintln(out, "chats options: --groups --filter TrackMate --topics --admins --json")
 	fmt.Fprintln(out, "rate-sweep options: --chat @bot --runs 3 --artifact-root artifacts/rate-sweep --prepare-scenario path.jsonl --min-action-ms 1800 --max-action-ms 3000 --resolution-ms 100")
@@ -245,159 +249,145 @@ func emitInteractiveReady(tr *transcript.Transcript, out io.Writer, cfg config.C
 }
 
 func runCommandStream(ctx context.Context, runner *engine.Engine, read func(func(protocol.Command) error) error) error {
-	return read(func(cmd protocol.Command) error {
-		return runner.Execute(ctx, cmd)
+	var executionErr error
+	readErr := read(func(cmd protocol.Command) error {
+		executionErr = runner.Execute(ctx, cmd)
+		return executionErr
 	})
+	if executionErr != nil {
+		return atStage("execute", readErr)
+	}
+	return atStage("read", readErr)
 }
 
-func withRuntimeLock(cfg config.Config, run func() error) error {
+func withRuntimeLock(cfg config.Config, run func() error) (resultErr error) {
 	lock, err := runlock.Acquire(cfg.RuntimeLockPath())
 	if err != nil {
 		return err
 	}
 	defer func() {
-		_ = lock.Release()
+		resultErr = errors.Join(resultErr, lock.Release())
 	}()
 	return run()
 }
 
 func saveTranscript(cfg config.Config, tr *transcript.Transcript, prefix string, stderr io.Writer) (runScenarioArtifact, error) {
+	artifact := runScenarioArtifact{TranscriptLabel: prefix}
+	var errs []error
 	jsonPath := filepath.Join(cfg.TranscriptOutputDir, prefix+".json")
 	textPath := filepath.Join(cfg.TranscriptOutputDir, prefix+".txt")
 	if err := tr.SaveJSON(jsonPath); err != nil {
-		fmt.Fprintf(stderr, "warning: failed to save JSON transcript: %v\n", err)
-		return runScenarioArtifact{}, err
+		errs = append(errs, fmt.Errorf("save JSON transcript: %w", err))
+	} else {
+		artifact.TranscriptJSON = absPathOrFallback(jsonPath)
 	}
 	if err := tr.SaveText(textPath); err != nil {
-		fmt.Fprintf(stderr, "warning: failed to save text transcript: %v\n", err)
-		return runScenarioArtifact{}, err
+		errs = append(errs, fmt.Errorf("save text transcript: %w", err))
+	} else {
+		artifact.TranscriptText = absPathOrFallback(textPath)
 	}
-	absJSONPath, err := filepath.Abs(jsonPath)
-	if err != nil {
-		absJSONPath = jsonPath
-	}
-	absTextPath, err := filepath.Abs(textPath)
-	if err != nil {
-		absTextPath = textPath
-	}
-	return runScenarioArtifact{
-		TranscriptJSON:  absJSONPath,
-		TranscriptText:  absTextPath,
-		TranscriptLabel: prefix,
-	}, nil
+	return artifact, errors.Join(errs...)
 }
 
-func saveScenarioArtifacts(cfg config.Config, tr *transcript.Transcript, scenarioPath, prefix string, stderr io.Writer) (scenarioArtifacts, error) {
-	artifact, err := saveTranscript(cfg, tr, prefix, stderr)
-	if err != nil {
-		return scenarioArtifacts{}, err
-	}
-
+func saveScenarioArtifacts(cfg config.Config, tr *transcript.Transcript, scenarioPath, prefix string, stderr io.Writer, executionErr error) (scenarioArtifacts, error) {
+	artifact, rawErr := saveTranscript(cfg, tr, prefix, stderr)
+	artifact.ScenarioPath = scenarioPath
 	compact := triage.BuildCompactTranscript(tr)
+	compact.RawJSON = artifact.TranscriptJSON
 	compactJSONPath := filepath.Join(cfg.TranscriptOutputDir, prefix+".compact.json")
 	compactTextPath := filepath.Join(cfg.TranscriptOutputDir, prefix+".compact.txt")
-	compactBody, err := triage.MarshalIndent(compact)
-	if err != nil {
-		fmt.Fprintf(stderr, "warning: failed to encode compact transcript: %v\n", err)
-		return scenarioArtifacts{}, err
+	jsonErr := writeJSONFile(compactJSONPath, compact)
+	if jsonErr == nil {
+		artifact.TranscriptCompactJSON = absPathOrFallback(compactJSONPath)
 	}
-	if err := os.WriteFile(compactJSONPath, compactBody, 0o644); err != nil {
-		fmt.Fprintf(stderr, "warning: failed to save compact JSON transcript: %v\n", err)
-		return scenarioArtifacts{}, err
+	textErr := writeFileAtomic(compactTextPath, []byte(compact.RenderText()))
+	if textErr == nil {
+		artifact.TranscriptCompactText = absPathOrFallback(compactTextPath)
 	}
-	if err := os.WriteFile(compactTextPath, []byte(compact.RenderText()), 0o644); err != nil {
-		fmt.Fprintf(stderr, "warning: failed to save compact text transcript: %v\n", err)
-		return scenarioArtifacts{}, err
+	saveErr := errors.Join(rawErr, jsonErr, textErr)
+	summary := triage.BuildSummaryRow(tr, scenarioPath, prefix, artifact.TranscriptJSON,
+		artifact.TranscriptText, artifact.TranscriptCompactJSON, artifact.TranscriptCompactText, executionErr)
+	if saveErr != nil {
+		summary.Status = "failed"
+		summary.FailureStage = "save"
+		summary.TerminalError = errors.Join(executionErr, saveErr).Error()
+		summary.FailureAt = time.Now().UTC()
 	}
-
-	artifact.ScenarioPath = scenarioPath
-	artifact.TranscriptCompactJSON = absPathOrFallback(compactJSONPath)
-	artifact.TranscriptCompactText = absPathOrFallback(compactTextPath)
-
-	summary := triage.BuildSummaryRow(
-		tr,
-		scenarioPath,
-		prefix,
-		artifact.TranscriptJSON,
-		artifact.TranscriptText,
-		artifact.TranscriptCompactJSON,
-		artifact.TranscriptCompactText,
-	)
-
-	return scenarioArtifacts{
-		Artifact:   artifact,
-		Summary:    summary,
-		Transcript: tr,
-	}, nil
+	return scenarioArtifacts{Artifact: artifact, Summary: summary, Transcript: tr}, saveErr
 }
 
-func saveLastRunArtifacts(cfg config.Config, entries []scenarioArtifacts, stderr io.Writer) {
+func saveLastRunArtifacts(cfg config.Config, entries []scenarioArtifacts, stderr io.Writer) error {
 	summaryRows := make([]triage.SummaryRow, 0, len(entries))
 	artifactRows := make([]runScenarioArtifact, 0, len(entries))
 	transcripts := make(map[string]*transcript.Transcript, len(entries))
+	runID, status := "", "passed"
+	var runErrors []string
 	for _, entry := range entries {
 		summaryRows = append(summaryRows, entry.Summary)
 		artifactRows = append(artifactRows, entry.Artifact)
 		if entry.Transcript != nil {
 			transcripts[entry.Artifact.TranscriptLabel] = entry.Transcript
 		}
+		runID = entry.Summary.RunID
+		if entry.Summary.RunStatus != "" {
+			status = entry.Summary.RunStatus
+		}
+		if entry.Summary.TerminalError != "" {
+			runErrors = append(runErrors, entry.Summary.TerminalError)
+		}
 	}
-	triage.SortRows(summaryRows)
-
 	summaryJSONPath := filepath.Join(cfg.TranscriptOutputDir, lastRunSummaryJSONFile)
 	summaryTextPath := filepath.Join(cfg.TranscriptOutputDir, lastRunSummaryTextFile)
-	if err := writeJSONFile(summaryJSONPath, summaryRows); err != nil {
-		fmt.Fprintf(stderr, "warning: failed to save run summary json: %v\n", err)
-	} else if err := os.WriteFile(summaryTextPath, []byte(triage.RenderSummaryText(summaryRows)), 0o644); err != nil {
-		fmt.Fprintf(stderr, "warning: failed to save run summary text: %v\n", err)
-	}
-
 	failure := triage.BuildLastFailure(summaryRows, transcripts)
 	lastFailureJSONPath := filepath.Join(cfg.TranscriptOutputDir, lastFailureJSONFile)
 	lastFailureTextPath := filepath.Join(cfg.TranscriptOutputDir, lastFailureTextFile)
+	var errs []error
+	errs = append(errs, writeJSONFile(summaryJSONPath, summaryRows))
+	errs = append(errs, writeFileAtomic(summaryTextPath, []byte(triage.RenderSummaryText(summaryRows))))
 	if failure != nil {
-		if err := writeJSONFile(lastFailureJSONPath, failure); err != nil {
-			fmt.Fprintf(stderr, "warning: failed to save last failure json: %v\n", err)
-		} else if err := os.WriteFile(lastFailureTextPath, []byte(failure.RenderText()), 0o644); err != nil {
-			fmt.Fprintf(stderr, "warning: failed to save last failure text: %v\n", err)
-		}
+		errs = append(errs, writeJSONFile(lastFailureJSONPath, failure))
+		errs = append(errs, writeFileAtomic(lastFailureTextPath, []byte(failure.RenderText())))
 	} else {
-		_ = os.Remove(lastFailureJSONPath)
-		_ = os.Remove(lastFailureTextPath)
+		for _, path := range []string{lastFailureJSONPath, lastFailureTextPath} {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				errs = append(errs, err)
+			}
+		}
 	}
-
-	body, err := json.MarshalIndent(runScenarioArtifactMap{
-		GeneratedAt:        time.Now().UTC(),
-		LastRunSummaryJSON: absPathOrFallback(summaryJSONPath),
-		LastRunSummaryText: absPathOrFallback(summaryTextPath),
-		LastFailureJSON:    optionalAbsPath(lastFailureJSONPath, failure != nil),
-		LastFailureText:    optionalAbsPath(lastFailureTextPath, failure != nil),
-		Entries:            artifactRows,
-	}, "", "  ")
-	if err != nil {
-		fmt.Fprintf(stderr, "warning: failed to encode artifact map: %v\n", err)
-		return
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("save run summary: %w", err)
 	}
-	path := filepath.Join(cfg.TranscriptOutputDir, lastRunArtifactsFile)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		fmt.Fprintf(stderr, "warning: failed to create artifact map directory: %v\n", err)
-		return
-	}
-	if err := os.WriteFile(path, body, 0o644); err != nil {
-		fmt.Fprintf(stderr, "warning: failed to save artifact map: %v\n", err)
-		return
-	}
+	return writeJSONFile(filepath.Join(cfg.TranscriptOutputDir, lastRunArtifactsFile), runScenarioArtifactMap{
+		RunID: runID, Status: status, Error: strings.Join(runErrors, "\n"), GeneratedAt: time.Now().UTC(),
+		LastRunSummaryJSON: absPathOrFallback(summaryJSONPath), LastRunSummaryText: absPathOrFallback(summaryTextPath),
+		LastFailureJSON: optionalAbsPath(lastFailureJSONPath, failure != nil), LastFailureText: optionalAbsPath(lastFailureTextPath, failure != nil),
+		Entries: artifactRows,
+	})
 }
 
 func writeJSONFile(path string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	body, err := triage.MarshalIndent(value)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, body, 0o644)
+	return writeFileAtomic(path, body)
+}
+
+func writeFileAtomic(path string, body []byte) (resultErr error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".report-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	_, writeErr := file.Write(body)
+	closeErr := file.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 func absPathOrFallback(path string) string {

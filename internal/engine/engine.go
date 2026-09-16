@@ -20,6 +20,13 @@ import (
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/transcript"
 )
 
+// ProductFailure indicates an unmet visible expectation after successful observation.
+// Transport failures and unavailable observations retain their original error.
+type ProductFailure struct{ Err error }
+
+func (e *ProductFailure) Error() string { return e.Err.Error() }
+func (e *ProductFailure) Unwrap() error { return e.Err }
+
 type Transport interface {
 	SendText(ctx context.Context, chat string, messageThreadID int, text string) error
 	EditText(ctx context.Context, chat string, messageThreadID int, messageID int, text string) error
@@ -286,9 +293,9 @@ func (e *Engine) executeTextAssertion(ctx context.Context, cmd protocol.Command,
 				})
 			}
 			if cmd.Action == "assert_visible_text" {
-				lastErr = fmt.Errorf("visible text %q not found", cmd.Text)
+				lastErr = &ProductFailure{Err: fmt.Errorf("visible text %q not found", cmd.Text)}
 			} else {
-				lastErr = fmt.Errorf("visible text %q is still present", cmd.Text)
+				lastErr = &ProductFailure{Err: fmt.Errorf("visible text %q is still present", cmd.Text)}
 			}
 		}
 
@@ -552,7 +559,7 @@ func (e *Engine) executeWait(ctx context.Context, cmd protocol.Command, chat str
 		case <-ctx.Done():
 			return e.emitError(cmd, chat, messageThreadID, ctx.Err())
 		case <-deadline.C:
-			timeoutErr := fmt.Errorf("wait timeout after %s", timeout)
+			timeoutErr := &ProductFailure{Err: fmt.Errorf("wait timeout after %s", timeout)}
 			if err := e.emit(protocol.Event{
 				Type:            "timeout",
 				CommandID:       cmd.ID,
@@ -681,7 +688,7 @@ func (e *Engine) waitForClickableButton(ctx context.Context, chat string, messag
 		case <-ctx.Done():
 			return 0, "", state.ChatState{}, ctx.Err()
 		case <-deadline.C:
-			return 0, "", state.ChatState{}, fmt.Errorf("button %q did not appear within %s", cmd.ButtonText, timeout)
+			return 0, "", state.ChatState{}, &ProductFailure{Err: fmt.Errorf("button %q did not appear within %s", cmd.ButtonText, timeout)}
 		case <-ticker.C:
 			snapshot, err := e.transport.SyncChat(ctx, chat, messageThreadID, e.historyWindow)
 			if err != nil {
@@ -720,7 +727,7 @@ func (e *Engine) waitForPostClickVisibleChange(ctx context.Context, chat string,
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("no visible change after %s", timeout)
+			return &ProductFailure{Err: fmt.Errorf("no visible change after %s", timeout)}
 		case <-ticker.C:
 			snapshot, err := e.transport.SyncChat(ctx, chat, messageThreadID, e.historyWindow)
 			if err != nil {

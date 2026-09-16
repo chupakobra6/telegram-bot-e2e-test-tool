@@ -10,7 +10,7 @@ import (
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/transcript"
 )
 
-func TestBuildCompactTranscriptNormalizesKnownStates(t *testing.T) {
+func TestBuildCompactTranscriptPreservesSourceStates(t *testing.T) {
 	tr := transcript.New()
 	tr.AddCommand(protocol.Command{ID: "start", Action: "send_text", Text: "/start"})
 	tr.AddEvent(protocol.Event{
@@ -68,25 +68,25 @@ func TestBuildCompactTranscriptNormalizesKnownStates(t *testing.T) {
 	if len(compact.Events) != 4 {
 		t.Fatalf("expected 4 compact events, got %d", len(compact.Events))
 	}
-	if compact.Events[1].State != "home tracked=1 soon=1 expired=0" {
+	if compact.Events[1].State != collapseWhitespace(tr.Events[1].Output.Snapshot.Pinned.Text) {
 		t.Fatalf("unexpected normalized home state: %#v", compact.Events[1])
 	}
 	if compact.Events[2].State != "" {
 		t.Fatalf("expected repeated pinned state to be suppressed, got %#v", compact.Events[2])
 	}
-	if compact.Events[3].State != "draft name=молоко date=missing source=текст status=needs_date" {
+	if compact.Events[3].State != collapseWhitespace(tr.Events[3].Output.Snapshot.Messages[0].Text) {
 		t.Fatalf("unexpected normalized draft state: %#v", compact.Events[3])
 	}
-	if compact.FinalStateLabel != "draft name=молоко date=missing source=текст status=needs_date" {
+	if compact.FinalStateLabel != collapseWhitespace(tr.Events[3].Output.Snapshot.Messages[0].Text) {
 		t.Fatalf("unexpected final state label: %q", compact.FinalStateLabel)
 	}
-	if got := strings.Join(compact.FinalButtons, ","); got != "edit_name,edit_date,cancel,save,settings" {
+	if got := strings.Join(compact.FinalButtons, ","); got != "📝 Название,📅 Срок,↩️ Отмена,✅ Сохранить,⚙️ Настройки" {
 		t.Fatalf("unexpected final buttons: %q", got)
 	}
 }
 
 func TestNormalizeButtonAndLogLines(t *testing.T) {
-	if got := normalizeButtonLabel("⚙️ Настройки"); got != "settings" {
+	if got := normalizeButtonLabel("⚙️ Настройки"); got != "⚙️ Настройки" {
 		t.Fatalf("normalizeButtonLabel() = %q", got)
 	}
 	line := `{"time":"2026-04-21T19:16:12Z","level":"INFO","msg":"telegram_send_message_completed","trace_id":"abc","update_id":42,"error":"context deadline exceeded","big":"ignore me"}`
@@ -154,5 +154,28 @@ func TestBuildLastFailureUsesLatestFailedScenario(t *testing.T) {
 	}
 	if len(report.Window) == 0 || report.Window[len(report.Window)-1].Error == "" {
 		t.Fatalf("expected failure window with terminal error, got %#v", report.Window)
+	}
+}
+
+func TestCompactStatesRetainNegationsConditionsAndSymbols(t *testing.T) {
+	for _, text := range []string{"Изменения не сохранены", "Изменения сохранены, если прошла проверка", "⛔ Обработка запрещена", "✅ Принял, но ещё не обработал", "Отмена недоступна", "Удалено 0 объектов", "Скоро истекают разрешения; продление не выполнено"} {
+		if got := normalizeStateLabel(text); got != text {
+			t.Errorf("%q changed to %q", text, got)
+		}
+	}
+	tr := transcript.New()
+	prefix := strings.Repeat("x", 700)
+	for _, suffix := range []string{" сохранено", " не сохранено"} {
+		tr.AddEvent(protocol.Event{Type: "state_update", Snapshot: &state.ChatState{Pinned: &state.PinnedMessage{Text: prefix + suffix}}})
+	}
+	compact := BuildCompactTranscript(tr)
+	if len(compact.Events) != 2 || compact.Events[1].State == "" {
+		t.Fatal("semantic change after excerpt was suppressed")
+	}
+	if !strings.Contains(compact.Events[1].State, "truncated") || compact.Events[1].SourceEvent != 2 {
+		t.Fatalf("missing source reference: %+v", compact.Events[1])
+	}
+	if tr.Events[1].Output.Snapshot.Pinned.Text != prefix+" не сохранено" {
+		t.Fatal("raw transcript changed")
 	}
 }

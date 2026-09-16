@@ -1,8 +1,10 @@
 package ratesweep
 
 import (
-	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -56,7 +58,19 @@ type Options struct {
 	Now               func() time.Time
 }
 
+type Outcome string
+
+const (
+	Passed        Outcome = "passed"
+	RateLimited   Outcome = "rate_limit"
+	ProductFailed Outcome = "product_failure"
+	Unavailable   Outcome = "unavailable"
+)
+
 type ProbeResult struct {
+	Outcome         Outcome
+	Confirmation    bool
+	InputDigest     string
 	ProbeIndex      int
 	ActionSpacingMS int64
 	Passed          bool
@@ -68,6 +82,10 @@ type ProbeResult struct {
 }
 
 type SummaryRow struct {
+	Phase           string
+	Outcome         Outcome
+	Reason          string
+	CompletedRuns   int
 	ProbeIndex      int
 	ActionSpacingMS int64
 	Scenario        string
@@ -81,6 +99,9 @@ type SummaryRow struct {
 }
 
 type Recommendation struct {
+	Confirmed       bool
+	ProbeIndex      int
+	Error           string
 	Found           bool
 	LimitReached    bool
 	ActionSpacingMS int64
@@ -89,7 +110,25 @@ type Recommendation struct {
 	PinnedTTLMS     int64
 }
 
+type probeSession interface {
+	engine.Transport
+	SetFloodWaitRetry(bool)
+	ConfigurePacing(time.Duration, time.Duration, time.Duration)
+	Cooldown(context.Context, time.Duration) error
+	Stats() mtproto.Stats
+	FloodEvents() []mtproto.FloodEvent
+}
+
+type authorizeFunc func(context.Context, func(context.Context, probeSession) error) error
+
 func Run(ctx context.Context, baseCfg config.Config, stdout io.Writer, opts Options) error {
+	client := mtproto.New(baseCfg)
+	return run(ctx, baseCfg, stdout, opts, func(ctx context.Context, fn func(context.Context, probeSession) error) error {
+		return client.RunAuthorized(ctx, func(ctx context.Context, session *mtproto.Session) error { return fn(ctx, session) })
+	})
+}
+
+func run(ctx context.Context, baseCfg config.Config, stdout io.Writer, opts Options, authorize authorizeFunc) error {
 	if stdout == nil {
 		stdout = io.Discard
 	}
@@ -97,105 +136,157 @@ func Run(ctx context.Context, baseCfg config.Config, stdout io.Writer, opts Opti
 	if err != nil {
 		return err
 	}
-	if err := validateScenarioInputs(normalized.ScenarioPaths, normalized.TargetChat); err != nil {
+	// Keep the configured RPC floor: action cadence is the searched variable.
+	if normalized.ProbeRPCSpacing < baseCfg.RPCSpacing {
+		normalized.ProbeRPCSpacing = baseCfg.RPCSpacing
+	}
+	if err := os.MkdirAll(normalized.ArtifactRoot, 0o755); err != nil {
 		return err
 	}
-	if err := validateScenarioInputs(normalized.PreparePaths, normalized.TargetChat); err != nil {
-		return err
-	}
-
-	stamp := normalized.Now().UTC().Format("20060102T150405Z")
-	outDir := filepath.Join(normalized.ArtifactRoot, stamp)
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	outDir, err := os.MkdirTemp(normalized.ArtifactRoot, normalized.Now().UTC().Format("20060102T150405Z")+"-")
+	if err != nil {
 		return fmt.Errorf("create rate sweep directory: %w", err)
 	}
-	summaryPath := filepath.Join(outDir, "summary.tsv")
-	recommendationPath := filepath.Join(outDir, "recommendation.txt")
-
-	probeRows := make([]SummaryRow, 0)
-	probeResults := make([]ProbeResult, 0)
-	recommendation := Recommendation{
-		Found:           false,
-		LimitReached:    true,
-		SyncIntervalMS:  normalized.ProbeSyncInterval.Milliseconds(),
-		RPCSpacingMS:    normalized.ProbeRPCSpacing.Milliseconds(),
-		PinnedTTLMS:     normalized.ProbePinnedTTL.Milliseconds(),
-		ActionSpacingMS: 0,
+	fmt.Fprintf(stdout, "rate sweep artifacts: %s\n", outDir)
+	var results []ProbeResult
+	rows := []SummaryRow{}
+	rec := Recommendation{SyncIntervalMS: normalized.ProbeSyncInterval.Milliseconds(), RPCSpacingMS: normalized.ProbeRPCSpacing.Milliseconds(), PinnedTTLMS: normalized.ProbePinnedTTL.Milliseconds()}
+	save := func() error {
+		summaryErr := writeSummary(filepath.Join(outDir, "summary.tsv"), rows)
+		if summaryErr != nil {
+			rec.Found, rec.Confirmed, rec.ActionSpacingMS = false, false, 0
+			rec.Error = summaryErr.Error()
+		}
+		body, marshalErr := json.MarshalIndent(struct {
+			Options        map[string]any
+			Probes         []ProbeResult
+			Recommendation Recommendation
+		}{Options: normalizedForReport(normalized), Probes: results, Recommendation: rec}, "", "  ")
+		if marshalErr == nil {
+			marshalErr = writeAtomic(filepath.Join(outDir, "probes.json"), body)
+		}
+		if marshalErr != nil {
+			rec.Found, rec.Confirmed, rec.ActionSpacingMS = false, false, 0
+			rec.Error = marshalErr.Error()
+		}
+		return errors.Join(summaryErr, marshalErr, writeRecommendation(filepath.Join(outDir, "recommendation.txt"), rec, normalized))
 	}
 
-	client := mtproto.New(baseCfg)
-	if err := client.RunAuthorized(ctx, func(ctx context.Context, session *mtproto.Session) error {
-		session.SetFloodWaitRetry(false)
-		candidates := buildCandidates(normalized.MinActionSpacing, normalized.MaxActionSpacing, normalized.Resolution)
-		lo := 0
-		hi := len(candidates) - 1
-		bestIdx := -1
-		probeCache := map[int]ProbeResult{}
-		probeOrder := 0
-
-		for lo <= hi {
-			mid := lo + (hi-lo)/2
-			candidate := candidates[mid]
-			result, ok := probeCache[mid]
-			if !ok {
-				probeOrder++
-				fmt.Fprintf(stdout, "==> probe=%d action=%dms sync=%dms rpc=%dms pinned=%dms\n",
-					probeOrder,
-					candidate.Milliseconds(),
-					normalized.ProbeSyncInterval.Milliseconds(),
-					normalized.ProbeRPCSpacing.Milliseconds(),
-					normalized.ProbePinnedTTL.Milliseconds(),
-				)
-				var err error
-				result, err = runProbe(ctx, session, baseCfg, normalized, outDir, candidate, probeOrder)
-				if err != nil {
-					return err
+	// The report exists before validation and authorization, including early failures.
+	runErr := save()
+	if runErr == nil {
+		runErr = validateScenarioInputs(normalized.ScenarioPaths, normalized.TargetChat)
+	}
+	if runErr == nil {
+		runErr = validateScenarioInputs(normalized.PreparePaths, normalized.TargetChat)
+	}
+	var digest string
+	if runErr == nil {
+		digest, runErr = inputDigest(normalized)
+	}
+	if runErr == nil {
+		runErr = authorize(ctx, func(ctx context.Context, session probeSession) error {
+			session.SetFloodWaitRetry(false)
+			var searchErr error
+			rec, searchErr = search(normalized, rec, func(spacing time.Duration, index int, confirmation bool) (ProbeResult, error) {
+				currentDigest, err := inputDigest(normalized)
+				result := ProbeResult{ProbeIndex: index, ActionSpacingMS: spacing.Milliseconds(), Outcome: Unavailable, Reason: "scenario inputs changed during sweep", InputDigest: currentDigest, Confirmation: confirmation}
+				if err == nil && currentDigest == digest {
+					result, err = runProbe(ctx, session, baseCfg, normalized, outDir, spacing, index)
+					result.InputDigest, result.Confirmation = digest, confirmation
+					postDigest, postErr := inputDigest(normalized)
+					if postErr != nil {
+						err = errors.Join(err, postErr)
+					} else if postDigest != digest {
+						err = errors.Join(err, fmt.Errorf("scenario inputs changed during probe"))
+					}
+				} else if err == nil {
+					err = fmt.Errorf("scenario inputs changed during sweep")
 				}
-				probeCache[mid] = result
-				probeResults = append(probeResults, result)
-				probeRows = append(probeRows, result.ScenarioRows...)
-				fmt.Fprintf(stdout, "   result=%t elapsed=%dms flood_waits=%d transport_floods=%d reason=%s\n",
-					result.Passed,
-					result.TotalElapsedMS,
-					result.FloodWaits,
-					result.TransportFloods,
-					result.Reason,
-				)
-			}
+				if err != nil {
+					result.Outcome, result.Passed, result.Reason = Unavailable, false, err.Error()
+				}
+				results = append(results, result)
+				rows = append(rows, result.ScenarioRows...)
+				fmt.Fprintf(stdout, "probe=%d action=%dms outcome=%s confirmation=%t reason=%s\n", index, spacing.Milliseconds(), result.Outcome, confirmation, result.Reason)
+				return result, errors.Join(err, save())
+			})
+			return searchErr
+		})
+	}
+	if runErr != nil {
+		rec.Found, rec.Confirmed = false, false
+		rec.ActionSpacingMS = 0
+		rec.Error = runErr.Error()
+	}
+	saveErr := save()
+	if saveErr != nil {
+		rec.Found, rec.Confirmed, rec.ActionSpacingMS = false, false, 0
+		rec.Error = errors.Join(runErr, saveErr).Error()
+		// A report write failure must not leave a published successful recommendation.
+		saveErr = errors.Join(saveErr, save())
+	}
+	renderSummaryTable(stdout, rows)
+	if runErr == nil && saveErr == nil {
+		renderRecommendation(stdout, rec, normalized)
+	}
+	return errors.Join(runErr, saveErr)
+}
 
-			if result.Passed {
-				bestIdx = mid
-				hi = mid - 1
-				continue
-			}
+// Function values cannot be encoded; the clock is execution-only, not a probe input.
+func normalizedForReport(opts Options) map[string]any {
+	return map[string]any{"scenarios": opts.ScenarioPaths, "prepare": opts.PreparePaths, "runs": opts.Runs,
+		"target_chat": opts.TargetChat, "min_action_ms": opts.MinActionSpacing.Milliseconds(), "max_action_ms": opts.MaxActionSpacing.Milliseconds(),
+		"resolution_ms": opts.Resolution.Milliseconds(), "rpc_spacing_ms": opts.ProbeRPCSpacing.Milliseconds(), "sync_interval_ms": opts.ProbeSyncInterval.Milliseconds(), "pinned_ttl_ms": opts.ProbePinnedTTL.Milliseconds()}
+}
+
+func inputDigest(opts Options) (string, error) {
+	h := sha256.New()
+	for _, path := range append(append([]string{}, opts.PreparePaths...), opts.ScenarioPaths...) {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(h, "%d:%s:%d:", len(path), path, len(body))
+		h.Write(body)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+func search(opts Options, rec Recommendation, probe func(time.Duration, int, bool) (ProbeResult, error)) (Recommendation, error) {
+	candidates := buildCandidates(opts.MinActionSpacing, opts.MaxActionSpacing, opts.Resolution)
+	lo, hi, best, order := 0, len(candidates)-1, -1, 0
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		order++
+		result, err := probe(candidates[mid], order, false)
+		if err != nil {
+			return rec, err
+		}
+		switch result.Outcome {
+		case Passed:
+			best, hi = mid, mid-1
+		case RateLimited:
 			lo = mid + 1
+		default:
+			return rec, fmt.Errorf("probe %d %s: %s", order, result.Outcome, result.Reason)
 		}
-
-		if bestIdx >= 0 {
-			recommendation.Found = true
-			recommendation.ActionSpacingMS = candidates[bestIdx].Milliseconds()
-			recommendation.LimitReached = bestIdx != 0
-		}
-		return nil
-	}); err != nil {
-		return err
 	}
-
-	if err := writeSummary(summaryPath, probeRows); err != nil {
-		return err
+	if best < 0 {
+		return rec, fmt.Errorf("no passing action spacing in tested range")
 	}
-	if err := writeRecommendation(recommendationPath, recommendation, normalized); err != nil {
-		return err
+	// Repeat all preparation and useful work at the selected interval.
+	order++
+	confirmation, err := probe(candidates[best], order, true)
+	if err != nil {
+		return rec, err
 	}
-
-	fmt.Fprintln(stdout)
-	fmt.Fprintf(stdout, "rate sweep summary: %s\n", summaryPath)
-	renderSummaryTable(stdout, probeRows)
-	fmt.Fprintln(stdout)
-	fmt.Fprintf(stdout, "recommendation: %s\n", recommendationPath)
-	renderRecommendation(stdout, recommendation, normalized)
-
-	return nil
+	if confirmation.Outcome != Passed {
+		return rec, fmt.Errorf("confirmation %s: %s", confirmation.Outcome, confirmation.Reason)
+	}
+	rec.Found, rec.Confirmed, rec.ProbeIndex = true, true, order
+	rec.ActionSpacingMS, rec.LimitReached = candidates[best].Milliseconds(), best != 0
+	return rec, nil
 }
 
 func normalizeOptions(opts Options) (Options, error) {
@@ -273,111 +364,99 @@ func validateScenarioInputs(paths []string, targetChat string) error {
 	return nil
 }
 
-func runProbe(
-	ctx context.Context,
-	session *mtproto.Session,
-	baseCfg config.Config,
-	opts Options,
-	outDir string,
-	actionSpacing time.Duration,
-	probeIndex int,
-) (ProbeResult, error) {
-	result := ProbeResult{
-		ProbeIndex:      probeIndex,
-		ActionSpacingMS: actionSpacing.Milliseconds(),
-		Passed:          true,
-		Reason:          "ok",
-	}
-
-	transcriptDir := filepath.Join(outDir, "transcripts", fmt.Sprintf("%02d-%dms", probeIndex, actionSpacing.Milliseconds()))
+func runProbe(ctx context.Context, session probeSession, baseCfg config.Config, opts Options, outDir string, actionSpacing time.Duration, probeIndex int) (result ProbeResult, resultErr error) {
+	result = ProbeResult{ProbeIndex: probeIndex, ActionSpacingMS: actionSpacing.Milliseconds(), Outcome: Unavailable}
+	start := time.Now()
+	defer func() {
+		result.TotalElapsedMS = time.Since(start).Milliseconds()
+		if resultErr != nil {
+			result.Outcome, result.Reason = Unavailable, resultErr.Error()
+		}
+		result.Passed = result.Outcome == Passed
+	}()
+	dir := filepath.Join(outDir, "transcripts", fmt.Sprintf("%02d-%dms", probeIndex, actionSpacing.Milliseconds()))
 	readOpts := scenario.ReadOptions{TargetChat: opts.TargetChat}
+	runBatch := func(path, phase string, syncInterval time.Duration, runs int) (SummaryRow, error) {
+		row, err := runScenarioBatch(ctx, session, baseCfg, actionSpacing, probeIndex, filepath.Join(dir, phase), path, readOpts, syncInterval, runs)
+		row.Phase = phase
+		if phase == "prepare" && row.Outcome != Passed {
+			row.Outcome, row.Passed = Unavailable, false
+			row.Reason = "preparation failed: " + row.Reason
+		}
+		result.ScenarioRows = append(result.ScenarioRows, row)
+		result.FloodWaits += row.FloodWaits
+		result.TransportFloods += row.TransportFloods
+		return row, err
+	}
 	if len(opts.PreparePaths) > 0 {
 		if err := session.Cooldown(ctx, DefaultProbeCooldown); err != nil {
-			return ProbeResult{}, err
+			return result, err
 		}
 		session.ConfigurePacing(baseCfg.ActionSpacing, baseCfg.RPCSpacing, baseCfg.PinnedCacheTTL)
-		for _, preparePath := range opts.PreparePaths {
-			row, err := runScenarioBatch(ctx, session, baseCfg, actionSpacing, probeIndex, transcriptDir, preparePath, readOpts, baseCfg.SyncInterval, 1)
+		for _, path := range opts.PreparePaths {
+			row, err := runBatch(path, "prepare", baseCfg.SyncInterval, 1)
 			if err != nil {
-				return ProbeResult{}, err
+				return result, err
 			}
-			if !row.Passed {
-				result.Passed = false
-				result.Reason = scenarioFailureReason("prepare", row)
+			if row.Outcome != Passed {
+				result.Outcome, result.Reason = Unavailable, row.Reason
 				return result, nil
 			}
 		}
 	}
 	if err := session.Cooldown(ctx, DefaultProbeCooldown); err != nil {
-		return ProbeResult{}, err
+		return result, err
 	}
 	session.ConfigurePacing(actionSpacing, opts.ProbeRPCSpacing, opts.ProbePinnedTTL)
-
-	statsBeforeProbe := session.Stats()
-	startProbe := time.Now()
-
-	for _, scenarioPath := range opts.ScenarioPaths {
-		row, err := runScenarioBatch(ctx, session, baseCfg, actionSpacing, probeIndex, transcriptDir, scenarioPath, readOpts, opts.ProbeSyncInterval, opts.Runs)
+	for _, path := range opts.ScenarioPaths {
+		row, err := runBatch(path, "measure", opts.ProbeSyncInterval, opts.Runs)
 		if err != nil {
-			return ProbeResult{}, err
+			return result, err
 		}
-		result.ScenarioRows = append(result.ScenarioRows, row)
-		if !row.Passed {
-			result.Passed = false
-			result.Reason = scenarioFailureReason("scenario", row)
-			break
+		if row.Outcome != Passed {
+			result.Outcome, result.Reason = row.Outcome, row.Reason
+			return result, nil
 		}
 	}
-
-	statsAfterProbe := session.Stats()
-	result.TotalElapsedMS = time.Since(startProbe).Milliseconds()
-	result.FloodWaits = statsAfterProbe.FloodWaits - statsBeforeProbe.FloodWaits
-	result.TransportFloods = statsAfterProbe.TransportFloods - statsBeforeProbe.TransportFloods
-	if result.Passed && (result.FloodWaits > 0 || result.TransportFloods > 0) {
-		result.Passed = false
-		if result.TransportFloods > 0 {
-			result.Reason = "transport flood"
-		} else {
-			result.Reason = "flood wait"
-		}
-	}
+	result.Outcome, result.Reason = Passed, "all requested runs completed"
 	return result, nil
 }
 
-func runScenarioBatch(
-	ctx context.Context,
-	session *mtproto.Session,
-	baseCfg config.Config,
-	actionSpacing time.Duration,
-	probeIndex int,
-	transcriptDir string,
-	scenarioPath string,
-	readOpts scenario.ReadOptions,
-	syncInterval time.Duration,
-	runs int,
-) (SummaryRow, error) {
-	baseName := strings.TrimSuffix(filepath.Base(scenarioPath), filepath.Ext(scenarioPath))
-	statsBeforeScenario := session.Stats()
+func runScenarioBatch(ctx context.Context, session probeSession, baseCfg config.Config, actionSpacing time.Duration, probeIndex int, transcriptDir, scenarioPath string, readOpts scenario.ReadOptions, syncInterval time.Duration, runs int) (row SummaryRow, resultErr error) {
+	row = SummaryRow{ProbeIndex: probeIndex, ActionSpacingMS: actionSpacing.Milliseconds(), Scenario: scenarioPath, Runs: runs, Outcome: Unavailable}
+	before := session.Stats()
 	start := time.Now()
-	exitCode := 0
-
+	var executionErr error
+	defer func() {
+		after := session.Stats()
+		row.ElapsedMS = time.Since(start).Milliseconds()
+		row.FloodWaits, row.TransportFloods = after.FloodWaits-before.FloodWaits, after.TransportFloods-before.TransportFloods
+		row.FloodOps = summarizeFloodOps(session.FloodEvents(), before, after)
+		row.Outcome, row.Reason = classify(row, executionErr, resultErr)
+		row.Passed = row.Outcome == Passed
+		if !row.Passed {
+			row.ExitCode = 1
+		}
+	}()
+	baseName := strings.TrimSuffix(filepath.Base(scenarioPath), filepath.Ext(scenarioPath))
 	for runIndex := 0; runIndex < runs; runIndex++ {
 		prefix := fmt.Sprintf("%s__run-%02d", baseName, runIndex+1)
 		logPath := filepath.Join(transcriptDir, prefix+".log")
 		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-			return SummaryRow{}, fmt.Errorf("create log directory: %w", err)
+			return row, err
 		}
 		logFile, err := os.Create(logPath)
 		if err != nil {
-			return SummaryRow{}, fmt.Errorf("create log file: %w", err)
+			return row, err
 		}
-
-		eventsBefore := len(session.FloodEvents())
+		beforeRun := session.Stats()
 		tr := transcript.New()
 		runner := engine.New(session, tr, logFile, baseCfg.HistoryWindow, syncInterval)
-		err = scenario.ReadWithOptions(scenarioPath, readOpts, func(cmd protocol.Command) error {
+		var actionErr error
+		executionErr = scenario.ReadWithOptions(scenarioPath, readOpts, func(cmd protocol.Command) error {
 			traceCommand(logFile, "start", cmd, nil)
 			err := runner.Execute(ctx, cmd)
+			actionErr = err
 			if err != nil {
 				traceCommand(logFile, "error", cmd, err)
 				return err
@@ -386,47 +465,59 @@ func runScenarioBatch(
 			return nil
 		})
 		closeErr := logFile.Close()
-		if closeErr != nil && err == nil {
-			err = closeErr
+		events := session.FloodEvents()
+		afterRun := session.Stats()
+		count := afterRun.FloodWaits - beforeRun.FloodWaits + afterRun.TransportFloods - beforeRun.TransportFloods
+		if count < len(events) {
+			events = events[len(events)-count:]
 		}
-		eventsAfter := session.FloodEvents()
-		appendFloodEvents(logPath, eventsAfter[eventsBefore:])
-		if saveErr := saveTranscriptSet(transcriptDir, prefix, tr); saveErr != nil {
-			return SummaryRow{}, saveErr
+		floodErr := appendFloodEvents(logPath, events)
+		saveErr := saveTranscriptSet(transcriptDir, prefix, tr)
+		if executionErr == nil {
+			row.CompletedRuns++
 		}
-		if err != nil {
-			exitCode = 1
+		var readErr error
+		if executionErr != nil && actionErr == nil {
+			readErr = executionErr
+		}
+		if err := errors.Join(readErr, closeErr, floodErr, saveErr); err != nil {
+			return row, err
+		}
+		if executionErr != nil {
 			break
 		}
 	}
-
-	statsAfterScenario := session.Stats()
-	row := SummaryRow{
-		ProbeIndex:      probeIndex,
-		ActionSpacingMS: actionSpacing.Milliseconds(),
-		Scenario:        scenarioPath,
-		Runs:            runs,
-		ExitCode:        exitCode,
-		ElapsedMS:       time.Since(start).Milliseconds(),
-		FloodWaits:      statsAfterScenario.FloodWaits - statsBeforeScenario.FloodWaits,
-		TransportFloods: statsAfterScenario.TransportFloods - statsBeforeScenario.TransportFloods,
-	}
-	row.FloodOps = summarizeFloodOps(session.FloodEvents(), statsBeforeScenario, statsAfterScenario)
-	row.Passed = row.ExitCode == 0 && row.FloodWaits == 0 && row.TransportFloods == 0
 	return row, nil
 }
 
-func scenarioFailureReason(kind string, row SummaryRow) string {
-	if row.ExitCode != 0 {
-		return kind + " runtime error"
+func classify(row SummaryRow, executionErr, infrastructureErr error) (Outcome, string) {
+	if infrastructureErr != nil {
+		return Unavailable, errors.Join(executionErr, infrastructureErr).Error()
+	}
+	var product *engine.ProductFailure
+	if errors.As(executionErr, &product) {
+		return ProductFailed, executionErr.Error()
 	}
 	if row.TransportFloods > 0 {
-		return kind + " transport flood"
+		return Unavailable, "transport flood; action interval does not measure transport RPC capacity"
 	}
 	if row.FloodWaits > 0 {
-		return kind + " flood wait"
+		for _, op := range strings.Split(row.FloodOps, ",") {
+			switch op {
+			case "send_text", "edit_text", "send_photo", "send_photo_group", "send_document", "send_voice", "send_audio", "click_button", "delete_messages":
+			default:
+				return Unavailable, "RPC flood outside measured actions: " + row.FloodOps
+			}
+		}
+		return RateLimited, "Telegram action flood: " + row.FloodOps
 	}
-	return kind + " failed"
+	if executionErr != nil {
+		return Unavailable, executionErr.Error()
+	}
+	if row.CompletedRuns != row.Runs {
+		return Unavailable, "requested runs not completed"
+	}
+	return Passed, "all requested runs completed"
 }
 
 func traceCommand(w io.Writer, phase string, cmd protocol.Command, err error) {
@@ -443,24 +534,22 @@ func traceCommand(w io.Writer, phase string, cmd protocol.Command, err error) {
 		strings.ToUpper(phase), now, cmd.ID, cmd.Action, cmd.Chat)
 }
 
-func appendFloodEvents(logPath string, events []mtproto.FloodEvent) {
+func appendFloodEvents(logPath string, events []mtproto.FloodEvent) error {
 	if len(events) == 0 {
-		return
+		return nil
 	}
-	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
+	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return err
 	}
-	defer file.Close()
+	var writeErr error
 	for _, event := range events {
-		fmt.Fprintf(file, "FLOOD_EVENT at=%s kind=%s op=%s delay_ms=%d error=%q\n",
-			event.At.Format(time.RFC3339),
-			event.Kind,
-			event.Operation,
-			event.Delay.Milliseconds(),
-			event.Error,
-		)
+		if _, err := fmt.Fprintf(file, "FLOOD_EVENT at=%s kind=%s op=%s delay_ms=%d error=%q\n", event.At.Format(time.RFC3339), event.Kind, event.Operation, event.Delay.Milliseconds(), event.Error); err != nil {
+			writeErr = err
+			break
+		}
 	}
+	return errors.Join(writeErr, file.Close())
 }
 
 func summarizeFloodOps(events []mtproto.FloodEvent, statsBefore mtproto.Stats, statsAfter mtproto.Stats) string {
@@ -495,19 +584,11 @@ func saveTranscriptSet(dir string, prefix string, tr *transcript.Transcript) err
 }
 
 func writeSummary(path string, rows []SummaryRow) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create summary directory: %w", err)
-	}
-	file, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("create summary file: %w", err)
-	}
-	defer file.Close()
-
-	w := bufio.NewWriter(file)
-	fmt.Fprintln(w, "probe\taction_spacing_ms\tscenario\truns\texit_code\telapsed_ms\tflood_waits\ttransport_floods\tflood_ops\tpassed")
+	var buffer strings.Builder
+	w := &buffer
+	fmt.Fprintln(w, "probe\taction_spacing_ms\tscenario\truns\texit_code\telapsed_ms\tflood_waits\ttransport_floods\tflood_ops\tpassed\tphase\toutcome\tcompleted_runs\treason")
 	for _, row := range rows {
-		fmt.Fprintf(w, "%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%t\n",
+		fmt.Fprintf(w, "%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%t\t%s\t%s\t%d\t%q\n",
 			row.ProbeIndex,
 			row.ActionSpacingMS,
 			row.Scenario,
@@ -517,17 +598,17 @@ func writeSummary(path string, rows []SummaryRow) error {
 			row.FloodWaits,
 			row.TransportFloods,
 			row.FloodOps,
-			row.Passed,
+			row.Passed, row.Phase, row.Outcome, row.CompletedRuns, row.Reason,
 		)
 	}
-	return w.Flush()
+	return writeAtomic(path, []byte(buffer.String()))
 }
 
 func renderSummaryTable(out io.Writer, rows []SummaryRow) {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "probe\taction_spacing_ms\tscenario\truns\texit_code\telapsed_ms\tflood_waits\ttransport_floods\tflood_ops\tpassed")
+	fmt.Fprintln(tw, "probe\taction_spacing_ms\tscenario\truns\texit_code\telapsed_ms\tflood_waits\ttransport_floods\tflood_ops\tpassed\tphase\toutcome\tcompleted_runs\treason")
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%t\n",
+		fmt.Fprintf(tw, "%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%t\t%s\t%s\t%d\t%q\n",
 			row.ProbeIndex,
 			row.ActionSpacingMS,
 			row.Scenario,
@@ -537,24 +618,16 @@ func renderSummaryTable(out io.Writer, rows []SummaryRow) {
 			row.FloodWaits,
 			row.TransportFloods,
 			row.FloodOps,
-			row.Passed,
+			row.Passed, row.Phase, row.Outcome, row.CompletedRuns, row.Reason,
 		)
 	}
 	_ = tw.Flush()
 }
 
 func writeRecommendation(path string, rec Recommendation, opts Options) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create recommendation directory: %w", err)
-	}
-	file, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("create recommendation file: %w", err)
-	}
-	defer file.Close()
-
-	w := bufio.NewWriter(file)
-	fmt.Fprintf(w, "found=%t\n", rec.Found)
+	var buffer strings.Builder
+	w := &buffer
+	fmt.Fprintf(w, "found=%t\nconfirmed=%t\nconfirmation_probe=%d\nerror=%s\n", rec.Found, rec.Confirmed, rec.ProbeIndex, rec.Error)
 	fmt.Fprintf(w, "limit_reached=%t\n", rec.LimitReached)
 	fmt.Fprintf(w, "action_spacing_ms=%d\n", rec.ActionSpacingMS)
 	fmt.Fprintf(w, "sync_interval_ms=%d\n", rec.SyncIntervalMS)
@@ -564,7 +637,7 @@ func writeRecommendation(path string, rec Recommendation, opts Options) error {
 	fmt.Fprintf(w, "search_min_action_ms=%d\n", opts.MinActionSpacing.Milliseconds())
 	fmt.Fprintf(w, "search_max_action_ms=%d\n", opts.MaxActionSpacing.Milliseconds())
 	fmt.Fprintf(w, "resolution_ms=%d\n", opts.Resolution.Milliseconds())
-	return w.Flush()
+	return writeAtomic(path, []byte(buffer.String()))
 }
 
 func renderRecommendation(out io.Writer, rec Recommendation, opts Options) {
@@ -588,4 +661,20 @@ func renderRecommendation(out io.Writer, rec Recommendation, opts Options) {
 			opts.MaxActionSpacing.Milliseconds(),
 		)
 	}
+}
+
+func writeAtomic(path string, body []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".sweep-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	_, writeErr := file.Write(body)
+	if err := errors.Join(writeErr, file.Close()); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }

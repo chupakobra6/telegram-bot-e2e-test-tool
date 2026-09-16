@@ -27,11 +27,10 @@ CLI автоматически загружает `.env` из рабочего �
 Для встроенного набора сценариев Shelfy:
 
 ```bash
-make fixtures
 make run-suite CHAT=@your_bot_username
 ```
 
-Для `make run-suite` требуется запущенное локальное тестовое окружение Shelfy с control API по адресу `http://127.0.0.1:8081`.
+`make run-suite` готовит недостающие тестовые медиа под общей блокировкой и затем выполняет весь набор; отдельный `make fixtures` нужен для явной перегенерации. Для `make run-suite` требуется запущенное локальное тестовое окружение Shelfy с control API по адресу `http://127.0.0.1:8081`.
 
 Подробности:
 
@@ -56,7 +55,7 @@ make rate-sweep CHAT=@your_bot_username
 make clean
 ```
 
-`make clean` удаляет сгенерированные файлы в `artifacts/` и стандартный `.sessions/runtime.lock`, сохраняя MTProto-сеанс в `.sessions/user.json`. Выполняй очистку после остановки запусков.
+`make clean` удаляет каталог протоколов из конфигурации, стандартные `artifacts/fixtures` и `artifacts/rate-sweep` под той же блокировкой, что и запуск. При занятой сессии очистка завершается до удаления файлов. Файл блокировки и MTProto-сеанс сохраняются; каталог, содержащий их, очищать нельзя.
 
 ## Протокол JSONL
 
@@ -130,7 +129,6 @@ make clean
 Весь набор:
 
 ```bash
-make fixtures
 make run-suite CHAT=@your_bot_username
 ```
 
@@ -151,7 +149,7 @@ go run ./cmd/tg-e2e-tool run-scenario \
 
 ## Тестовые файлы и протоколы выполнения
 
-`make fixtures` создаёт:
+`make fixtures` захватывает блокировку сессии и создаёт:
 
 - `artifacts/fixtures/e2e-photo.png`
 - `artifacts/fixtures/e2e-receipt.png`
@@ -160,7 +158,7 @@ go run ./cmd/tg-e2e-tool run-scenario \
 - `artifacts/fixtures/e2e-audio.mp3`
 - `artifacts/fixtures/e2e-document.txt`
 
-`run-scenario` и `run-suite` сохраняют протоколы и обновляют файлы последнего запуска в `artifacts/transcripts/`:
+`interactive`, `run-scenario`, `run-block`, `run-text-matrix` и `run-suite` сохраняют протоколы в `artifacts/transcripts/runs/<run_id>/` и обновляют файлы последнего запуска в `artifacts/transcripts/`:
 
 - `last-run-artifacts.json`
 - `last-run-summary.json`
@@ -174,9 +172,11 @@ go run ./cmd/tg-e2e-tool run-scenario \
 2. При ошибке открой `artifacts/transcripts/last-failure.txt`.
 3. Для подробностей прочитай краткий или исходный протокол нужного сценария.
 
-Сверяй итог с кодом завершения команды и сообщениями об ошибках сохранения. Текущая сводка не отражает все отказы подготовки, разбора сценария и записи артефактов; отсутствие ошибки в ней не всегда означает полный успешный запуск.
+Сводка связывает строки с `run_id` и общим `run_status`: `running`, `passed` или `failed`. Перед подготовкой публикуется новый запуск, поэтому ранний отказ чтения, подготовки или авторизации не оставляет прежний успех. Сценарии имеют `status=passed|failed|not_run`; невыполненный остаток не получает выдуманного времени исполнения. Ошибки чтения, исполнения, записи и очистки возвращают ненулевой код; отдельная строка `[run]` отражает отказ вне сценария. При невозможности записать сводку команда явно возвращает ошибку, а доступные протоколы сохраняются. Ошибка аргументов, конфигурации или захвата блокировки не начинает новый запуск; для такого отказа смотри stderr, а не прежнюю сводку.
 
-Компактные подписи состояний используют в том числе словарь Shelfy и могут потерять смысл незнакомого текста: например, отрицание в «Изменения не сохранены». Для проверки содержания сверяй подпись с исходным протоколом; полный текст сохраняется отдельно.
+`execution_status` отдельно показывает исполнение сценария, а `property_status` — явные утверждения: `not_checked`, `assertions_passed`, `assertions_failed`, `partial` или `unknown`. Сохранённый снимок сам по себе не подтверждает свойство. Ошибка записи может дать `status=failed` при `execution_status=passed`; пути указывают только на успешно сохранённые файлы. Массив `last-run-summary.json` сохраняет прежнюю форму для потребителей, новые свидетельства добавлены в строки и `last-run-artifacts.json`.
+
+Компактные состояния и кнопки сохраняют исходные слова и символы, включая отрицания и условия. Удаляются лишние пробелы и повтор неизменного закреплённого текста. Длинное состояние обозначается `truncated`; `raw_json` и номер `source_event` ведут к полному источнику. Сравнение повторов использует полный текст, поэтому изменение за границей фрагмента остаётся видимым. Исходный JSON-протокол не меняется.
 
 ## Устройство репозитория
 
@@ -184,7 +184,7 @@ go run ./cmd/tg-e2e-tool run-scenario \
 - [`cmd/fixturegen`](./cmd/fixturegen) — отдельный генератор тестовых PNG;
 - [`examples/suite`](./examples/suite) — встроенный набор сценариев Shelfy;
 - [`examples/helpers`](./examples/helpers) — повторно используемые вспомогательные фрагменты;
-- [`examples/bench`](./examples/bench) — измерительные сценарии и подбор интервала между запросами;
+- [`examples/bench`](./examples/bench) — измерительные сценарии и подбор интервала между действиями;
 - [`internal/protocol`](./internal/protocol) — контракт JSONL-команд и событий;
 - [`internal/engine`](./internal/engine) — исполнение действий;
 - [`internal/state`](./internal/state) — модель видимого снимка чата и различий;
@@ -198,4 +198,4 @@ go run ./cmd/tg-e2e-tool run-scenario \
 - `send_photo_group` отправляет один Telegram-альбом: от 2 до 10 путей фотографий и общую подпись, применяемую к каждому элементу:
   `{"id":"album","action":"send_photo_group","paths":["@fixtures/e2e-photo.png","@fixtures/e2e-receipt.png"],"caption":"общая подпись"}`
 - `delete_visible_messages` использует MTProto-аккаунт пользователя. Для удаления и пользовательских сообщений, и ответов бота в супергруппе этому аккаунту нужны права на удаление сообщений бота.
-- Запускай `login`, `interactive`, `chats`, `run-scenario`, `run-suite`, `run-block`, `run-text-matrix` и `rate-sweep` последовательно для одного Telegram-аккаунта.
+- Запускай `login`, `interactive`, `chats`, `run-scenario`, `run-suite`, `run-block`, `run-text-matrix`, `fixtures` и `rate-sweep` последовательно для одного Telegram-аккаунта.

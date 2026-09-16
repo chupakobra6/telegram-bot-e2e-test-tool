@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -96,18 +97,21 @@ var defaultSuite = builtInSuite{
 	},
 }
 
-func runScenarioCommand(cfg config.Config, client interface {
+type authorizedClient interface {
 	RunAuthorized(context.Context, func(context.Context, *mtproto.Session) error) error
-}, scenarioPaths []string) error {
+}
+
+func runScenarioCommand(cfg config.Config, client authorizedClient, scenarioPaths []string) error {
 	if len(scenarioPaths) < 1 {
 		return fmt.Errorf("run-scenario requires at least one JSONL path")
 	}
-	targetChat := strings.TrimSpace(os.Getenv("CHAT"))
-	sources, err := pathScenarioSources(scenarioPaths, targetChat, nil)
-	if err != nil {
-		return err
-	}
-	return runAuthorizedScenarioSources(cfg, client, sources)
+	return runRecorded(cfg, scenarioPaths, func(result *runResult) error {
+		sources, err := pathScenarioSources(scenarioPaths, strings.TrimSpace(os.Getenv("CHAT")), nil)
+		if err != nil {
+			return atStage("read", err)
+		}
+		return runAuthorizedScenarioSources(client, result, sources)
+	})
 }
 
 func runBlockCommand(cfg config.Config, client interface {
@@ -122,32 +126,31 @@ func runBlockCommand(cfg config.Config, client interface {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	targetChat := strings.TrimSpace(os.Getenv("CHAT"))
-	if targetChat == "" {
-		return fmt.Errorf("CHAT is required")
-	}
 	if len(fs.Args()) < 1 {
 		return fmt.Errorf("run-block requires at least one scenario path")
 	}
-
-	if !*noReset {
-		if err := postControl(*controlURL, "/control/e2e/reset"); err != nil {
-			return err
+	return runRecorded(cfg, fs.Args(), func(result *runResult) (runErr error) {
+		targetChat := strings.TrimSpace(os.Getenv("CHAT"))
+		if targetChat == "" {
+			return atStage("prepare", fmt.Errorf("CHAT is required"))
 		}
-	}
-	if *clearTime {
-		defer func() {
-			_ = postControl(*controlURL, "/control/time/clear")
-		}()
-	}
-
-	sources, err := pathScenarioSources(fs.Args(), targetChat, runPrefix)
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintf(os.Stderr, "RUN_PREFIX=%s\n", *runPrefix)
-	return runAuthorizedScenarioSources(cfg, client, sources)
+		sources, err := pathScenarioSources(fs.Args(), targetChat, runPrefix)
+		if err != nil {
+			return atStage("read", err)
+		}
+		if *clearTime {
+			defer func() {
+				runErr = errors.Join(runErr, atStage("cleanup", postControl(*controlURL, "/control/time/clear")))
+			}()
+		}
+		if !*noReset {
+			if err := postControl(*controlURL, "/control/e2e/reset"); err != nil {
+				return atStage("prepare", err)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "RUN_PREFIX=%s\n", *runPrefix)
+		return runAuthorizedScenarioSources(client, result, sources)
+	})
 }
 
 func runTextMatrixCommand(cfg config.Config, client interface {
@@ -161,134 +164,103 @@ func runTextMatrixCommand(cfg config.Config, client interface {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	targetChat := strings.TrimSpace(os.Getenv("CHAT"))
-	if targetChat == "" {
-		return fmt.Errorf("CHAT is required")
-	}
-	if strings.TrimSpace(*casesFile) == "" {
-		return fmt.Errorf("CASES or --cases is required")
-	}
-	resolvedCases := resolveInputPath(*casesFile)
-	body, err := os.ReadFile(resolvedCases)
-	if err != nil {
-		return fmt.Errorf("read cases file: %w", err)
-	}
-
-	sources := make([]scenarioSource, 0)
-	lines := strings.Split(string(body), "\n")
-	caseIndex := 0
-	for _, line := range lines {
-		phrase := strings.TrimSpace(line)
-		if phrase == "" || strings.HasPrefix(phrase, "#") {
-			continue
+	return runRecorded(cfg, []string{*casesFile}, func(result *runResult) error {
+		targetChat := strings.TrimSpace(os.Getenv("CHAT"))
+		if targetChat == "" {
+			return fmt.Errorf("CHAT is required")
 		}
-		caseIndex++
-		fmt.Fprintf(os.Stdout, "==> text case %d: %s\n", caseIndex, phrase)
-		commands := textcase.Render(targetChat, phrase, *cancelButton, *waitTimeoutMS)
-		path := fmt.Sprintf("%s#%02d", resolvedCases, caseIndex)
-		prefix := fmt.Sprintf("case-%02d", caseIndex)
-		sources = append(sources, commandScenarioSource(path, prefix, commands))
-	}
-	if len(sources) == 0 {
-		return fmt.Errorf("no runnable cases found in %s", resolvedCases)
-	}
+		if strings.TrimSpace(*casesFile) == "" {
+			return fmt.Errorf("CASES or --cases is required")
+		}
+		resolvedCases := resolveInputPath(*casesFile)
+		body, err := os.ReadFile(resolvedCases)
+		if err != nil {
+			return fmt.Errorf("read cases file: %w", err)
+		}
 
-	if err := runAuthorizedScenarioSources(cfg, client, sources); err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stdout, "text matrix completed")
-	return nil
+		sources := make([]scenarioSource, 0)
+		lines := strings.Split(string(body), "\n")
+		caseIndex := 0
+		for _, line := range lines {
+			phrase := strings.TrimSpace(line)
+			if phrase == "" || strings.HasPrefix(phrase, "#") {
+				continue
+			}
+			caseIndex++
+			fmt.Fprintf(os.Stdout, "==> text case %d: %s\n", caseIndex, phrase)
+			commands := textcase.Render(targetChat, phrase, *cancelButton, *waitTimeoutMS)
+			path := fmt.Sprintf("%s#%02d", resolvedCases, caseIndex)
+			prefix := fmt.Sprintf("case-%02d", caseIndex)
+			sources = append(sources, commandScenarioSource(path, prefix, commands))
+		}
+		if len(sources) == 0 {
+			return fmt.Errorf("no runnable cases found in %s", resolvedCases)
+		}
+
+		result.entries = nil
+		for _, source := range sources {
+			result.plan([]string{source.ScenarioPath})
+		}
+		if err := result.publish(cfg, "running"); err != nil {
+			return atStage("save", err)
+		}
+		if err := runAuthorizedScenarioSources(client, result, sources); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "text matrix completed")
+		return nil
+	})
 }
 
-func runSuiteCommand(cfg config.Config, client interface {
-	RunAuthorized(context.Context, func(context.Context, *mtproto.Session) error) error
-}, repoRoot string) error {
-	targetChat := strings.TrimSpace(os.Getenv("CHAT"))
-	if targetChat == "" {
-		return fmt.Errorf("CHAT is required")
-	}
-
-	scenarioPaths := defaultSuite.scenarioPaths(repoRoot)
-	requiredFixtures := defaultSuite.requiredFixturePaths(repoRoot)
-
-	sources, err := pathScenarioSources(scenarioPaths, targetChat, nil)
-	if err != nil {
-		return err
-	}
-	for _, fixture := range requiredFixtures {
-		if !fileExists(fixture) {
-			return fmt.Errorf("required fixture missing: %s (run `tg-e2e-tool fixtures` first)", fixture)
+func runSuiteCommand(cfg config.Config, client authorizedClient, repoRoot string) error {
+	paths := defaultSuite.scenarioPaths(repoRoot)
+	paths = append(paths, defaultSuite.timedSetupPaths(repoRoot)...)
+	paths = append(paths, defaultSuite.timedObservePaths(repoRoot)...)
+	paths = append(paths, defaultSuite.timedClosePaths(repoRoot)...)
+	paths = append(paths, defaultSuite.timedCleanupPaths(repoRoot)...)
+	paths = append(paths, defaultSuite.paginationPaths(repoRoot)...)
+	paths = append(paths, defaultSuite.rapidOrderingPaths(repoRoot)...)
+	return runRecorded(cfg, paths, func(result *runResult) error {
+		targetChat := strings.TrimSpace(os.Getenv("CHAT"))
+		if targetChat == "" {
+			return atStage("prepare", fmt.Errorf("CHAT is required"))
 		}
-	}
-	controlURL := defaultControlURL()
-
-	return withRuntimeLock(cfg, func() error {
-		return client.RunAuthorized(context.Background(), func(ctx context.Context, session *mtproto.Session) error {
-			artifacts := make([]scenarioArtifacts, 0, len(sources)+8)
-
+		if err := prepareSuiteFixtures(repoRoot); err != nil {
+			return atStage("prepare", err)
+		}
+		controlURL := defaultControlURL()
+		return atStage("authorize", client.RunAuthorized(context.Background(), func(ctx context.Context, session *mtproto.Session) error {
 			if err := postControl(controlURL, "/control/time/clear"); err != nil {
-				return fmt.Errorf("run-suite requires reachable Shelfy control API at %s: %w", controlURL, err)
+				return atStage("prepare", err)
 			}
-
 			if err := postControl(controlURL, "/control/e2e/reset"); err != nil {
+				return atStage("prepare", err)
+			}
+			if err := runSuitePhase(ctx, session, result, "core", defaultSuite.scenarioPaths(repoRoot), targetChat, nil); err != nil {
 				return err
 			}
-			artifacts, err = runSuitePhase(ctx, cfg, session, os.Stdout, os.Stderr, artifacts, "core", sources)
-			if err != nil {
-				saveLastRunArtifacts(cfg, artifacts, os.Stderr)
+			if err := runTimedDigestSuite(ctx, session, repoRoot, targetChat, controlURL, result); err != nil {
 				return err
 			}
-
-			artifacts, err = runTimedDigestSuite(ctx, cfg, session, repoRoot, targetChat, controlURL, artifacts)
-			if err != nil {
-				saveLastRunArtifacts(cfg, artifacts, os.Stderr)
-				return err
-			}
-
 			if err := postControl(controlURL, "/control/e2e/reset"); err != nil {
-				saveLastRunArtifacts(cfg, artifacts, os.Stderr)
+				return atStage("prepare", err)
+			}
+			prefix := defaultRunPrefix()
+			if err := runSuitePhase(ctx, session, result, "pagination", defaultSuite.paginationPaths(repoRoot), targetChat, &prefix); err != nil {
 				return err
 			}
-			paginationPrefix := defaultRunPrefix()
-			paginationSources, err := pathScenarioSources(defaultSuite.paginationPaths(repoRoot), targetChat, &paginationPrefix)
-			if err != nil {
-				saveLastRunArtifacts(cfg, artifacts, os.Stderr)
-				return err
-			}
-			artifacts, err = runSuitePhase(ctx, cfg, session, os.Stdout, os.Stderr, artifacts, "pagination", paginationSources)
-			if err != nil {
-				saveLastRunArtifacts(cfg, artifacts, os.Stderr)
-				return err
-			}
-
 			if err := postControl(controlURL, "/control/e2e/reset"); err != nil {
-				saveLastRunArtifacts(cfg, artifacts, os.Stderr)
-				return err
+				return atStage("prepare", err)
 			}
-			rapidSources, err := pathScenarioSources(defaultSuite.rapidOrderingPaths(repoRoot), targetChat, nil)
-			if err != nil {
-				saveLastRunArtifacts(cfg, artifacts, os.Stderr)
-				return err
-			}
-			artifacts, err = runSuitePhase(ctx, cfg, session, os.Stdout, os.Stderr, artifacts, "ordering", rapidSources)
-			saveLastRunArtifacts(cfg, artifacts, os.Stderr)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintln(os.Stdout, "suite completed")
-			return nil
-		})
+			return runSuitePhase(ctx, session, result, "ordering", defaultSuite.rapidOrderingPaths(repoRoot), targetChat, nil)
+		}))
 	})
 }
 
-func runAuthorizedScenarioSources(cfg config.Config, client interface {
-	RunAuthorized(context.Context, func(context.Context, *mtproto.Session) error) error
-}, sources []scenarioSource) error {
-	return withRuntimeLock(cfg, func() error {
-		return client.RunAuthorized(context.Background(), func(ctx context.Context, session *mtproto.Session) error {
-			return runScenarioSources(ctx, cfg, session, sources, os.Stdout, os.Stderr)
-		})
-	})
+func runAuthorizedScenarioSources(client authorizedClient, result *runResult, sources []scenarioSource) error {
+	return atStage("authorize", client.RunAuthorized(context.Background(), func(ctx context.Context, session *mtproto.Session) error {
+		return result.execute(ctx, session, sources)
+	}))
 }
 
 func pathScenarioSources(paths []string, targetChat string, runPrefix *string) ([]scenarioSource, error) {
@@ -396,67 +368,49 @@ func postControlJSON(baseURL, path string, payload any) error {
 	return nil
 }
 
-func runTimedDigestSuite(ctx context.Context, cfg config.Config, session *mtproto.Session, repoRoot, targetChat, controlURL string, artifacts []scenarioArtifacts) ([]scenarioArtifacts, error) {
-	runPrefix := defaultRunPrefix()
+func runTimedDigestSuite(ctx context.Context, session *mtproto.Session, repoRoot, targetChat, controlURL string, result *runResult) (runErr error) {
+	prefix := defaultRunPrefix()
 	if err := postControl(controlURL, "/control/e2e/reset"); err != nil {
-		return artifacts, err
+		return atStage("prepare", err)
 	}
-	setupSources, err := pathScenarioSources(defaultSuite.timedSetupPaths(repoRoot), targetChat, &runPrefix)
-	if err != nil {
-		return artifacts, err
+	if err := runSuitePhase(ctx, session, result, "timed-digest-setup", defaultSuite.timedSetupPaths(repoRoot), targetChat, &prefix); err != nil {
+		return err
 	}
-	artifacts, err = runSuitePhase(ctx, cfg, session, os.Stdout, os.Stderr, artifacts, "timed-digest-setup", setupSources)
-	if err != nil {
-		return artifacts, err
-	}
-
 	digestAt, err := nextDigestTriggerTime()
 	if err != nil {
-		return artifacts, err
+		return atStage("prepare", err)
 	}
-	if err := postControlJSON(controlURL, "/control/time/set", map[string]any{"now": digestAt.Format(time.RFC3339)}); err != nil {
-		return artifacts, err
-	}
+	// Clear time even if set returned an error: the server may have applied it.
 	defer func() {
-		_ = postControl(controlURL, "/control/time/clear")
+		runErr = errors.Join(runErr, atStage("cleanup", postControl(controlURL, "/control/time/clear")))
 	}()
+	if err := postControlJSON(controlURL, "/control/time/set", map[string]any{"now": digestAt.Format(time.RFC3339)}); err != nil {
+		return atStage("prepare", err)
+	}
 	if err := postControlJSON(controlURL, "/control/jobs/run-due", map[string]any{"include_maintenance": true}); err != nil {
-		return artifacts, err
+		return atStage("prepare", err)
 	}
-
-	observeSources, err := pathScenarioSources(defaultSuite.timedObservePaths(repoRoot), targetChat, nil)
-	if err != nil {
-		return artifacts, err
+	if err := runSuitePhase(ctx, session, result, "timed-digest-observe", defaultSuite.timedObservePaths(repoRoot), targetChat, nil); err != nil {
+		return err
 	}
-	artifacts, err = runSuitePhase(ctx, cfg, session, os.Stdout, os.Stderr, artifacts, "timed-digest-observe", observeSources)
-	if err != nil {
-		return artifacts, err
+	if err := runSuitePhase(ctx, session, result, "timed-digest-close", defaultSuite.timedClosePaths(repoRoot), targetChat, &prefix); err != nil {
+		return err
 	}
-
-	closeSources, err := pathScenarioSources(defaultSuite.timedClosePaths(repoRoot), targetChat, &runPrefix)
-	if err != nil {
-		return artifacts, err
-	}
-	artifacts, err = runSuitePhase(ctx, cfg, session, os.Stdout, os.Stderr, artifacts, "timed-digest-close", closeSources)
-	if err != nil {
-		return artifacts, err
-	}
-
 	if err := postControl(controlURL, "/control/digests/reconcile"); err != nil {
-		return artifacts, err
+		return atStage("prepare", err)
 	}
-	cleanupSources, err := pathScenarioSources(defaultSuite.timedCleanupPaths(repoRoot), targetChat, nil)
-	if err != nil {
-		return artifacts, err
-	}
-	return runSuitePhase(ctx, cfg, session, os.Stdout, os.Stderr, artifacts, "timed-digest-cleanup", cleanupSources)
+	return runSuitePhase(ctx, session, result, "timed-digest-cleanup", defaultSuite.timedCleanupPaths(repoRoot), targetChat, nil)
 }
 
-func runSuitePhase(ctx context.Context, cfg config.Config, session *mtproto.Session, stdout, stderr *os.File, artifacts []scenarioArtifacts, phase string, sources []scenarioSource) ([]scenarioArtifacts, error) {
-	for _, source := range sources {
-		fmt.Fprintf(stdout, "==> [%s] %s\n", phase, source.ScenarioPath)
+func runSuitePhase(ctx context.Context, session *mtproto.Session, result *runResult, phase string, paths []string, targetChat string, prefix *string) error {
+	sources, err := pathScenarioSources(paths, targetChat, prefix)
+	if err != nil {
+		return atStage("read", err)
 	}
-	return runScenarioSourcesWithArtifacts(ctx, cfg, session, sources, stdout, stderr, artifacts)
+	for _, source := range sources {
+		fmt.Fprintf(os.Stdout, "==> [%s] %s\n", phase, source.ScenarioPath)
+	}
+	return result.execute(ctx, session, sources)
 }
 
 func nextDigestTriggerTime() (time.Time, error) {

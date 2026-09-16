@@ -32,14 +32,14 @@ func ReadWithOptions(path string, opts ReadOptions, fn func(protocol.Command) er
 	defer file.Close()
 
 	if err := ReadReaderWithOptions(filepath.Dir(path), file, opts, fn); err != nil {
-		return fmt.Errorf("read scenario: %w", err)
+		return fmt.Errorf("read scenario %s: %w", path, err)
 	}
 	return nil
 }
 
 func ReadBytesWithOptions(path string, body []byte, opts ReadOptions, fn func(protocol.Command) error) error {
 	if err := ReadReaderWithOptions(filepath.Dir(path), bytes.NewReader(body), opts, fn); err != nil {
-		return fmt.Errorf("read scenario: %w", err)
+		return fmt.Errorf("read scenario %s: %w", path, err)
 	}
 	return nil
 }

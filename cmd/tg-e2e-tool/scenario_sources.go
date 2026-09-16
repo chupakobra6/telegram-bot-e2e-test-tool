@@ -1,18 +1,13 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/igor/telegram-bot-e2e-test-tool/internal/config"
-	"github.com/igor/telegram-bot-e2e-test-tool/internal/engine"
-	"github.com/igor/telegram-bot-e2e-test-tool/internal/mtproto"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/protocol"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/scenario"
-	"github.com/igor/telegram-bot-e2e-test-tool/internal/transcript"
 )
 
 type scenarioSource struct {
@@ -84,39 +79,6 @@ func commandScenarioSource(path, prefix string, commands []protocol.Command) sce
 			return nil
 		},
 	}
-}
-
-func runScenarioSources(ctx context.Context, cfg config.Config, session *mtproto.Session, sources []scenarioSource, stdout, stderr *os.File) error {
-	artifacts, err := runScenarioSourcesWithArtifacts(ctx, cfg, session, sources, stdout, stderr, nil)
-	saveLastRunArtifacts(cfg, artifacts, stderr)
-	return err
-}
-
-func runScenarioSourcesWithArtifacts(ctx context.Context, cfg config.Config, session *mtproto.Session, sources []scenarioSource, stdout, stderr *os.File, existing []scenarioArtifacts) ([]scenarioArtifacts, error) {
-	artifacts := append([]scenarioArtifacts(nil), existing...)
-	for index, source := range sources {
-		tr := transcript.New()
-		runner := engine.New(session, tr, stdout, cfg.HistoryWindow, cfg.SyncInterval)
-		prefix := source.Prefix
-		if prefix == "" {
-			prefix = scenarioPrefix(source.ScenarioPath)
-		}
-		if len(sources) > 1 {
-			prefix = fmt.Sprintf("%02d-%s", index+1, prefix)
-		}
-		if err := runCommandStream(ctx, runner, source.Read); err != nil {
-			artifact, saveErr := saveScenarioArtifacts(cfg, tr, source.ScenarioPath, prefix, stderr)
-			if saveErr == nil {
-				artifacts = append(artifacts, artifact)
-			}
-			return artifacts, err
-		}
-		artifact, saveErr := saveScenarioArtifacts(cfg, tr, source.ScenarioPath, prefix, stderr)
-		if saveErr == nil {
-			artifacts = append(artifacts, artifact)
-		}
-	}
-	return artifacts, nil
 }
 
 func builtInRepoPath(repoRoot, relativePath string) string {

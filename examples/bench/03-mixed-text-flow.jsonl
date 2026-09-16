@@ -2,5 +2,6 @@
 {"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
 {"id":"send_text","action":"send_text","text":"кефир завтра"}
 {"id":"wait_draft","action":"wait","timeout_ms":12000}
+{"id":"assert_draft","action":"assert_visible_text","text":"Новый продукт","timeout_ms":12000}
 {"id":"cancel_draft","action":"click_button","button_text":"↩️ Отмена"}
 {"id":"dump_mixed","action":"dump_state"}

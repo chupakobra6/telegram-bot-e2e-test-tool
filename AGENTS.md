@@ -4,7 +4,7 @@
 
 ## Владельцы поведения
 
-- `cmd/tg-e2e-tool/main.go` — CLI и сохранение результатов.
+- `cmd/tg-e2e-tool/main.go` — CLI и запись артефактов; `cmd/tg-e2e-tool/run_result.go` — владение полным запуском, учёт его результата и публикация сводки.
 - `cmd/tg-e2e-tool/tooling_commands.go` — запуск набора сценариев Shelfy, блоков и текстовых наборов, подготовка через control API.
 - `internal/protocol/protocol.go` — JSONL-команды и события.
 - `internal/engine/engine.go` — исполнение действий.
@@ -38,7 +38,7 @@
 | Выполнить весь набор сценариев Shelfy | `make run-suite CHAT=@your_bot_username` |
 | Удалить сгенерированные артефакты после остановки запусков | `make clean` |
 
-`make clean` также удаляет стандартный `.sessions/runtime.lock`, сохраняя `.sessions/user.json`. Другие команды и параметры находятся в `make help` и README.
+`make fixtures` и подготовка недостающих обязательных медиа в `run-suite` выполняются под блокировкой сессии. `make clean` использует ту же блокировку и сохраняет её файл вместе с `.sessions/user.json`; при активном запуске очистка отказывает до удаления файлов. Другие команды и параметры находятся в `make help` и README.
 
 ## Проверка изменений
 

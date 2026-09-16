@@ -1,4 +1,5 @@
 # Shelfy prepare hook: force `/dashboard` and capture the current home state before a benchmark probe.
 {"id":"select_chat","action":"select_chat","chat":"@your_bot_username"}
 {"id":"dashboard_reset","action":"send_text","text":"/dashboard"}
+{"id":"assert_home","action":"assert_visible_text","text":"Главная","timeout_ms":12000}
 {"id":"dump_home","action":"dump_state"}

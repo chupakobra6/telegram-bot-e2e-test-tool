@@ -8,10 +8,39 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/igor/telegram-bot-e2e-test-tool/internal/config"
 	"github.com/igor/telegram-bot-e2e-test-tool/internal/fixturegen"
 )
 
-func runFixturesCommand(repoRoot string) error {
+func runFixturesCommand(cfg config.Config, repoRoot string) error {
+	return withRuntimeLock(cfg, func() error { return generateFixtures(repoRoot) })
+}
+
+// Called by run-suite while its owner already holds the lock.
+func prepareSuiteFixtures(repoRoot string) error {
+	paths := defaultSuite.requiredFixturePaths(repoRoot)
+	missing := false
+	for _, path := range paths {
+		if !fileExists(path) {
+			missing = true
+			break
+		}
+	}
+	if !missing {
+		return nil
+	}
+	if err := generateFixtures(repoRoot); err != nil {
+		return fmt.Errorf("prepare suite fixtures: %w", err)
+	}
+	for _, path := range paths {
+		if !fileExists(path) {
+			return fmt.Errorf("required suite fixture missing after generation: %s; suite uses artifacts/fixtures", path)
+		}
+	}
+	return nil
+}
+
+func generateFixtures(repoRoot string) error {
 	outDir := strings.TrimSpace(os.Getenv("TG_E2E_FIXTURE_DIR"))
 	if outDir == "" {
 		outDir = filepath.Join(repoRoot, "artifacts", "fixtures")

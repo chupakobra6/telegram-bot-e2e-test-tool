@@ -41,10 +41,10 @@ help:
 	@printf "  make run-scenario   # run one or more JSONL scenarios (SCENARIO=..., CHAT=...)\\n"
 	@printf "  make run-block      # run a stateful block with optional reset/template rendering (SCENARIO=..., CHAT=..., RUN_BLOCK_ARGS=...)\\n"
 	@printf "  make run-text-matrix # run a text-case matrix from CASES=... (CHAT=...)\\n"
-	@printf "  make fixtures       # generate local media fixtures\\n"
-	@printf "  make run-suite      # run the full Shelfy suite, including control-backed flows (CHAT=...)\\n"
+	@printf "  make fixtures       # generate local media fixtures under the session lock\\n"
+	@printf "  make run-suite      # prepare missing fixtures and run the full Shelfy suite under one lock (CHAT=...)\\n"
 	@printf "  make rate-sweep     # binary-search safe action spacing (CHAT=..., PREPARE_SCENARIO=...)\\n"
-	@printf "  make clean          # remove generated local artifacts and default runtime lock\\n"
+	@printf "  make clean          # remove generated artifacts under the session lock; preserve session and lock\\n"
 
 setup:
 	go mod tidy
@@ -79,15 +79,14 @@ run-block:
 run-text-matrix:
 	CHAT="$(CHAT)" $(CLI) run-text-matrix --cases "$(CASES)" $(if $(strip $(CANCEL_BUTTON_TEXT)),--cancel-button "$(CANCEL_BUTTON_TEXT)",) --wait-timeout-ms "$(or $(WAIT_TIMEOUT_MS),12000)" $(TEXT_MATRIX_ARGS)
 
-run-suite: fixtures
+run-suite:
 	CHAT="$(CHAT)" $(CLI) run-suite
 
-rate-sweep: fixtures
+rate-sweep:
 	$(CLI) rate-sweep $(RATE_SWEEP_ARGS)
 
 print-config:
 	$(CLI) print-config
 
 clean:
-	rm -rf artifacts/transcripts artifacts/fixtures artifacts/rate-sweep
-	rm -f .sessions/runtime.lock
+	$(CLI) clean
