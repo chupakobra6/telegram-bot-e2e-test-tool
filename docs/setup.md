@@ -1,6 +1,6 @@
-# Setup
+# Настройка
 
-## 1. Prepare the environment
+## 1. Подготовить окружение
 
 ```bash
 cd telegram-bot-e2e-test-tool
@@ -8,51 +8,42 @@ cp .env.example .env
 make setup
 ```
 
-Fill in:
+Заполни обязательные параметры:
 
 - `TG_E2E_APP_ID`
 - `TG_E2E_APP_HASH`
 - `TG_E2E_PHONE`
 
-Optional:
+При необходимости задай:
 
 - `TG_E2E_PASSWORD`
-- proxy variables such as `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`
+- переменные прокси: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`
 
-The CLI auto-loads `.env` from the current working directory and falls back to the repo root.
+CLI автоматически читает `.env` из текущего каталога, а если его там нет — из корня репозитория.
 
-## 2. Check the effective config
+## 2. Проверить действующую конфигурацию
 
 ```bash
 make doctor
 ```
 
-`doctor` shows:
+`doctor` показывает наличие учётных данных, пути к сессии, блокировке и протоколам, наличие файла сессии, интервалы действий и используемые переменные прокси. Команда обращается к Telegram, чтобы проверить авторизацию сессии.
 
-- whether Telegram credentials are set
-- where the session file lives
-- where the runtime lock file lives
-- where transcripts are written
-- whether the session file exists
-- whether Telegram still accepts the current session
-- effective pacing defaults
-- which proxy variables were picked up
-
-## 3. Create an MTProto session
+## 3. Создать MTProto-сессию
 
 ```bash
 make login
 ```
 
-The tool will ask for a Telegram login code and, if needed, a 2FA password.
+Инструмент запросит код входа в Telegram и при необходимости пароль двухфакторной аутентификации.
 
-## 4. Start interactive mode
+## 4. Запустить интерактивный режим
 
 ```bash
 make interactive
 ```
 
-Example commands:
+Пример команд:
 
 ```json
 {"id":"select","action":"select_chat","chat":"@your_bot_username"}
@@ -60,13 +51,13 @@ Example commands:
 {"id":"open","action":"click_button","button_text":"Open","message_text":"Expected card text"}
 ```
 
-## 5. Run one scenario
+## 5. Выполнить один сценарий
 
 ```bash
 make run-scenario SCENARIO=examples/suite/03-text-fast-path-complete.jsonl CHAT=@your_bot_username
 ```
 
-If you want to guarantee a fresh home dashboard first, prepend the helper scenario:
+Чтобы сначала подготовить актуальную главную панель, добавь вспомогательный сценарий:
 
 ```bash
 CHAT=@your_bot_username \
@@ -75,73 +66,67 @@ go run ./cmd/tg-e2e-tool run-scenario \
   examples/suite/03-text-fast-path-complete.jsonl
 ```
 
-`run-scenario` accepts absolute paths and paths relative to the CLI working directory.
+`run-scenario` принимает абсолютные пути и пути относительно рабочего каталога CLI.
 
-If a sibling product repo calls this tool through `make -C`, prefer absolute paths such as `$PWD/...`.
+При вызове из соседнего проекта через `make -C` используй абсолютные пути, например `$PWD/...`.
 
-## 6. Run the built-in Shelfy suite
+## 6. Выполнить встроенный набор Shelfy
 
 ```bash
 make fixtures
 make run-suite CHAT=@your_bot_username
 ```
 
-`run-suite` expects a live local Shelfy dev stack with the non-production control API reachable at `http://127.0.0.1:8081`.
+`run-suite` требует запущенного локального тестового окружения Shelfy с control API по адресу `http://127.0.0.1:8081`. Используй его в рамках порученной проверки Shelfy; архивный проект автоматически не разворачивается.
 
-The bundled suite currently covers:
+Набор выполняет следующие действия и сохраняет наблюдаемое состояние:
 
-- dashboard bootstrap and stale-dashboard recovery
-- dashboard/settings navigation
-- text fast-path save
-- incomplete draft name editing
-- repeated date editing with invalid and valid input
-- unsupported document upload
-- unsupported photo handling
-- product close/discard/delete flows
-- voice upload
-- audio upload
-- incomplete-draft save rejection and cancellation
-- timed digest setup/observe/cleanup
-- dashboard pagination
-- rapid same-user interaction ordering
+- создание главной панели и восстановление устаревшей;
+- переходы между панелью и настройками;
+- быстрое сохранение из текста;
+- изменение названия в неполном черновике;
+- повторное изменение даты с неверным и верным вводом;
+- отправка неподдерживаемого документа и фото;
+- закрытие, списание и удаление продукта;
+- отправка голосового и аудиофайла;
+- попытка сохранения неполного черновика и отмена;
+- подготовка, наблюдение и очистка сводки по времени;
+- переходы между страницами панели;
+- быстрые последовательные действия одного пользователя.
 
-`make run-suite` reuses one MTProto session across the full suite and stays strictly sequential.
+Автоматические утверждения покрывают только часть этих свойств: некоторые сценарии ограничиваются снимками. Для подтверждения продуктового результата проверь утверждения сценария и соответствующее видимое состояние.
 
-## 7. Generate fixtures
+`make run-suite` выполняет весь набор последовательно в одной MTProto-сессии.
+
+## 7. Подготовить тестовые медиа
 
 ```bash
 make fixtures
 ```
 
-This generates the tool-owned local media fixtures under `artifacts/fixtures/`.
+Команда создаёт принадлежащие инструменту тестовые медиа в `artifacts/fixtures/`.
 
-Photo fixtures are generated by the repo’s own `fixturegen`.
-Speech fixtures use macOS `say` with `Milena` when available. On other machines, the command reuses existing speech fixtures if present and otherwise fails loudly unless `TG_E2E_ALLOW_SYNTHETIC_AUDIO_FIXTURES=1`.
+Фото создаёт собственный `fixturegen`. Для речи используется macOS `say` с голосом `Milena`, когда он доступен. На остальных машинах команда берёт существующие речевые файлы; при их отсутствии завершается ошибкой, если явно не задано `TG_E2E_ALLOW_SYNTHETIC_AUDIO_FIXTURES=1`.
 
-External product repos can reference tool-owned fixtures directly inside scenarios:
+Другие проекты могут ссылаться на эти медиа прямо в сценариях:
 
 ```json
 {"id":"photo","action":"send_photo","path":"@fixtures/e2e-photo.png"}
 {"id":"album","action":"send_photo_group","paths":["@fixtures/e2e-photo.png","@fixtures/e2e-receipt.png"],"caption":"общая подпись"}
 ```
 
-## 8. Clean a reusable forum topic
+## 8. Очистить повторно используемую тему форума
 
-When a product suite reuses the same Telegram forum group, add a cleanup scenario
-at the end of the product-owned suite:
+Если продуктовые проверки используют одну форумную группу Telegram, добавь очистку в конец набора сценариев, принадлежащего продукту:
 
 ```json
 {"id":"select","action":"select_chat","chat":"@your_forum_group","message_thread_id":12345}
 {"id":"cleanup","action":"delete_visible_messages","max_batches":8}
 ```
 
-The cleanup action deletes visible non-service messages through the MTProto user
-account and keeps the topic starter, pinned message, and Telegram service
-messages. If a product intentionally leaves its intro unpinned, pass
-`keep_oldest: true` to keep the earliest ordinary visible message too. In
-supergroups, the MTProto user needs deletion rights to remove bot messages too.
+Действие удаляет обычные видимые сообщения через MTProto-аккаунт пользователя, сохраняя начало темы, закреплённое сообщение и служебные сообщения Telegram. Если вступление намеренно оставлено незакреплённым, `keep_oldest: true` сохраняет также самое раннее обычное видимое сообщение. Для удаления сообщений бота в супергруппе пользователю нужны права удаления.
 
-## 9. Run a text matrix
+## 9. Проверить набор текстовых вводов
 
 ```bash
 make run-text-matrix \
@@ -149,12 +134,12 @@ make run-text-matrix \
   CASES=/absolute/path/to/date-cases.txt
 ```
 
-Optional overrides:
+Необязательные переопределения:
 
 - `CANCEL_BUTTON_TEXT=↩️ Отмена`
 - `WAIT_TIMEOUT_MS=12000`
 
-## 10. Run a stateful block
+## 10. Выполнить блок с подготовкой состояния
 
 ```bash
 CHAT=@your_bot_username CONTROL_URL=http://127.0.0.1:8081 \
@@ -163,24 +148,19 @@ go run ./cmd/tg-e2e-tool run-block \
   /absolute/path/to/11-timed-digest-setup.jsonl.tmpl
 ```
 
-`run-block` owns:
+`run-block` выполняет сброс через `/control/e2e/reset`, задаёт `RUN_PREFIX`, подставляет его в `.jsonl.tmpl` и поддерживает необязательный `--clear-time`.
 
-- reset through `/control/e2e/reset`
-- `RUN_PREFIX`
-- `.jsonl.tmpl` rendering
-- optional `--clear-time`
+Адрес control API задаётся через `CONTROL_URL`. Код также ещё принимает прежнее имя `SHELFY_DEV_CONTROL_URL`.
 
-`CONTROL_URL` is the preferred control endpoint variable. `SHELFY_DEV_CONTROL_URL` remains only as a compatibility alias.
-
-## 11. Probe safe action spacing
+## 11. Подобрать интервал между действиями
 
 ```bash
 make rate-sweep CHAT=@your_bot_username
 ```
 
-For bundled Shelfy benchmarks, `rate-sweep` automatically executes `examples/bench/00-shelfy-home-warmup.jsonl` before every probe.
+Для встроенных измерений Shelfy `rate-sweep` перед каждой пробой автоматически выполняет `examples/bench/00-shelfy-home-warmup.jsonl`.
 
-For custom benchmarks:
+Для собственного сценария:
 
 ```bash
 go run ./cmd/tg-e2e-tool rate-sweep \
@@ -189,28 +169,29 @@ go run ./cmd/tg-e2e-tool rate-sweep \
   path/to/custom-bench.jsonl
 ```
 
-## 12. Transcript triage
+Текущая реализация учитывает и сбой подготовки как неуспешную пробу. Перед выводом о скорости проверь причину отказа: такая проба не подтверждает предел допустимого интервала.
 
-After `run-scenario` or `run-suite`, read artifacts in this order:
+## 12. Разобрать результат
+
+После `run-scenario` или `run-suite` читай результаты в таком порядке:
 
 1. `artifacts/transcripts/last-run-summary.txt`
 2. `artifacts/transcripts/last-failure.txt`
-3. scenario-level `.compact.txt`
-4. raw `.txt` or `.json` only if still needed
+3. `.compact.txt` нужного сценария;
+4. исходный `.txt` или `.json`, если нужны подробности.
 
-## Paths and defaults
+Сводка строится из сохранённых протоколов и пока не отражает все ошибки подготовки, чтения сценария и записи артефактов. Сверь её с кодом завершения команды и сообщениями об ошибках.
 
-By default, the tool uses:
+## Стандартные пути
 
-- session: `.sessions/user.json`
-- transcripts: `artifacts/transcripts`
+По умолчанию сессия хранится в `.sessions/user.json`, протоколы — в `artifacts/transcripts`.
 
-You usually do not need to override them in `.env`.
+Для обычного запуска переопределять их в `.env` не требуется.
 
-`make clean` removes generated content under `artifacts/` and the default `.sessions/runtime.lock`, but keeps `.sessions/user.json`.
+После остановки всех запусков `make clean` удаляет сгенерированные файлы в `artifacts/` и стандартный `.sessions/runtime.lock`, сохраняя `.sessions/user.json`.
 
-## Parallel-run safety
+## Владение сессией и стендом
 
-`login`, `interactive`, `run-scenario`, `run-block`, `run-text-matrix`, and `rate-sweep` take a runtime lock next to the session file.
+Команды `login`, `interactive`, `chats`, `run-scenario`, `run-suite`, `run-block`, `run-text-matrix` и `rate-sweep` используют блокировку рядом с файлом сессии.
 
-This is intentional. One Telegram test account and one tested chat should be controlled by one local process at a time.
+Один процесс должен владеть тестовым аккаунтом и стендом на всём пути: от подготовки до очистки. В текущем `run-block` сброс через control API выполняется до захвата блокировки, а `make clean` удаляет её файл без проверки владельца. Поэтому до исправления этих путей запускай подготовку, проверки и очистку строго последовательно.

@@ -1,20 +1,20 @@
-# Troubleshooting
+# Разбор неполадок
 
 ## `telegram session is not authorized`
 
-Run this first:
+Сначала выполни:
 
 ```bash
 make login
 ```
 
-Runtime commands require an existing MTProto session file.
+Для рабочих команд нужен существующий файл авторизованной MTProto-сессии.
 
 ## `TG_E2E_APP_ID` or `TG_E2E_APP_HASH` is required
 
-Telegram app credentials are not set in `.env`.
+В `.env` не заданы учётные данные приложения Telegram.
 
-Check:
+Проверь конфигурацию и авторизацию:
 
 ```bash
 make doctor
@@ -22,93 +22,79 @@ make doctor
 
 ## `chat is required`
 
-The command has no `chat` field and no current chat has been selected yet.
+В команде нет поля `chat`, и текущий чат ещё не выбран.
 
-Send `select_chat` first or pass `chat` explicitly on the command that needs it.
+Сначала отправь `select_chat` или укажи `chat` в нужной команде.
 
 ## `another tg-e2e-tool runtime is already active for this session`
 
-Another local `login`, `interactive`, `run-scenario`, `run-block`, `run-text-matrix`, or `rate-sweep` process is already holding the runtime lock for this MTProto session.
+Другой локальный процесс `login`, `interactive`, `chats`, `run-scenario`, `run-suite`, `run-block`, `run-text-matrix` или `rate-sweep` уже владеет блокировкой этой MTProto-сессии.
 
-This is expected protection, not a random failure. Do not run live Telegram scenarios in parallel with the same test account.
-
-Wait for the other process to exit, then retry.
+Это защита от одновременного управления одним тестовым аккаунтом. Дождись завершения владельца, затем повтори команду. Подготовку и очистку также выполняй последовательно: текущие ограничения описаны в [настройке](setup.md#владение-сессией-и-стендом).
 
 ## `button ... not found in visible messages`
 
-There is no matching inline button in the latest relevant bot message of the current snapshot.
+В последнем подходящем сообщении бота из текущего снимка нет нужной inline-кнопки.
 
-Run:
+Выполни:
 
 ```json
 {"id":"dump","action":"dump_state"}
 ```
 
-Then inspect which messages and buttons the tool actually sees right now.
+Проверь, какие сообщения и кнопки инструмент сейчас видит.
 
 ## `wait timeout`
 
-The visible chat state did not change before the timeout expired.
+За время ожидания видимое состояние чата не изменилось. Возможные причины:
 
-This usually means one of three things:
+- бот не ответил;
+- заданного времени недостаточно;
+- ожидаемое изменение не попало в видимое окно истории.
 
-- the bot did not respond
-- the timeout is too small
-- the expected change did not appear inside the visible history window
+Сопоставь условие ожидания с текущим снимком и ошибками транспорта, прежде чем увеличивать таймаут.
 
 ## `required fixture missing`
 
-The built-in suite now expects the bundled local fixtures to exist:
+Встроенный набор требует локальные тестовые фото, документ, голосовое сообщение и аудио.
 
-- photo
-- document
-- voice
-- audio
-
-Run:
+Выполни:
 
 ```bash
 make fixtures
 ```
 
-Then retry the scenario or suite.
+Затем повтори нужный сценарий или набор.
 
 ## `run-suite requires reachable Shelfy control API`
 
-The full built-in Shelfy suite now includes timed digest and reset-driven flows.
+Полный набор Shelfy включает сводку по времени и сценарии со сбросом состояния.
 
-Check that your local Shelfy dev stack is running and that the non-production control API is reachable:
+В рамках порученной проверки Shelfy убедись, что локальное тестовое окружение запущено и control API доступен. Следующая команда сбрасывает управляемое время на стенде:
 
 ```bash
 curl -X POST http://127.0.0.1:8081/control/time/clear
 ```
 
-If you use a different endpoint, set `CONTROL_URL`.
+Для другого адреса задай `CONTROL_URL`.
 
 ## `FLOOD_WAIT`
 
-The tool already uses conservative defaults for:
+Инструмент уже задаёт интервалы обновления чата, исходящих действий и MTProto RPC, а также кэширует закреплённое состояние.
 
-- sync polling
-- outgoing action spacing
-- generic MTProto RPC spacing
-- pinned-state caching
-
-If you still hit `FLOOD_WAIT`, do not start by turning pacing into permanent `.env` config.
-
-Use:
+Сначала найди конкретный ответ `FLOOD_WAIT` в протоколе. Он подтверждает ограничение Telegram; таймаут сценария сам по себе его не подтверждает. Для порученного измерения интервала действий доступна команда:
 
 ```bash
 make rate-sweep CHAT=@your_bot_username
 ```
 
-Then inspect which `action_spacing` candidate fails first.
+Посмотри, на каком `action_spacing` произошёл отказ и чем он вызван. Сейчас `rate-sweep` учитывает ошибку подготовки как неуспешную пробу; она не доказывает, что интервал слишком короткий. Другие RPC и сбой продукта также требуют отдельной диагностики.
 
-If you still need a slower account-safe profile for local debugging, prefer changing the sweep or runner invocation rather than keeping permanent tuning values in `.env`.
+Если для локальной отладки нужен больший интервал, задай его в конкретном измерении или запуске. Подтверди эффект на сопоставимой работе перед изменением постоянных настроек.
 
-## Where transcripts are stored
+## Где искать протоколы
 
-By default:
+Стандартные пути:
 
 - `artifacts/transcripts/*.json`
 - `artifacts/transcripts/*.txt`
@@ -117,10 +103,8 @@ By default:
 - `artifacts/transcripts/last-run-summary.txt`
 - `artifacts/transcripts/last-failure.txt`
 
-If the path was overridden, `make doctor` will show the effective location.
+При переопределённом пути `make doctor` показывает фактический каталог; команда также проверяет Telegram-авторизацию.
 
-Prefer the rolling triage files first:
+Начинай со сводки `last-run-summary.txt`, затем читай `last-failure.txt`, `.compact.txt` нужного сценария и при необходимости исходные `.txt`/`.json`.
 
-1. `last-run-summary.txt`
-2. `last-failure.txt`
-3. only then the raw transcript pair for the failing scenario
+Сводка пока не отражает все ошибки подготовки, чтения сценария и записи артефактов. Проверь также код завершения команды и сообщения об ошибках; при раннем отказе сохранённые файлы могут относиться к прежнему запуску.
